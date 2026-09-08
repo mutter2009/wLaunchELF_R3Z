@@ -150,6 +150,119 @@ void drawChar2(int n, int x, int y, u64 colour)
 		}
 	}
 }
+//---------------------------------------------------------------------------
+// 简体中文 (UTF-8) 支持：使用 font_cn.c 提供的 16x16 点阵字库
+//---------------------------------------------------------------------------
+extern unsigned short cn_unicode[];
+extern unsigned char  font_cn[];
+extern int             cn_glyph_count;
+extern int             g_useUTF8;   // 1 = 当前语言为中文(UTF-8)，由 lang.c 设置
+
+// 在 cn_unicode[] (升序排列) 中二分查找码点，返回字模下标；未找到返回 -1
+static int cn_glyph_index(unsigned int cp)
+{
+    int lo = 0, hi = cn_glyph_count - 1;
+    if (cp > 0xFFFF)
+        return -1;
+    while (lo <= hi) {
+        int mid = (lo + hi) >> 1;
+        unsigned short v = cn_unicode[mid];
+        if (cp == v)
+            return mid;
+        else if (cp < v)
+            hi = mid - 1;
+        else
+            lo = mid + 1;
+    }
+    return -1;
+}
+
+// 绘制一个 16x16 汉字 (idx 为 font_cn 中的字模下标)
+void drawCharCN(int idx, int x, int y, u64 colour)
+{
+    int i, j;
+    const u8 *cm = &font_cn[idx * 32];
+
+    updateScr_1 = 1;
+    for (i = 0; i < 16; i++) {                    // 16 行
+        u16 row = ((u16)cm[i * 2] << 8) | cm[i * 2 + 1];  // 16 位，MSB 在最左
+        for (j = 0; j < 16; j++) {                 // 16 列
+            if (row & (0x8000 >> j))
+                gsKit_prim_sprite(gsGlobal, x + j, y + i, x + j + 1, y + i + 1, 1, colour);
+        }
+    }
+}
+
+// Shift-JIS (cp932) -> Unicode 查找表，由 font_cn.c 生成 (索引 = leadIdx*188 + secIdx)
+extern const unsigned short g_sjis_unicode[];
+
+// 解码一个 Shift-JIS 双字节字符：返回 Unicode 码点，*nbytes=2；非法序列返回 0xFFFD
+static unsigned int decode_sjis(const unsigned char *s, int *nbytes)
+{
+    unsigned char lead = s[0];
+    if (lead < 0x81 || (lead > 0x9F && lead < 0xE0) || lead > 0xFC) {
+        *nbytes = 1;
+        return 0xFFFD;
+    }
+    unsigned char second = s[1];
+    if (second < 0x40 || second == 0x7F || second > 0xFC) {
+        *nbytes = 1;
+        return 0xFFFD;
+    }
+    int li = (lead >= 0xE0) ? (lead - 0xE0 + 31) : (lead - 0x81);
+    int si = (second >= 0x80) ? (second - 0x80 + 63) : (second - 0x40);
+    unsigned int cp = g_sjis_unicode[li * 188 + si];
+    *nbytes = 2;
+    return (cp == 0xFFFF) ? 0xFFFD : cp;
+}
+
+// 自动识别 UTF-8 或 Shift-JIS 并解码一个字符：返回码点，*nbytes 返回占用字节数。
+// 策略：先尝试按 UTF-8 解析；若字节落入 Shift-JIS 首字节范围且不构成合法 UTF-8，
+//       则按 SJIS 解析。这样菜单(UTF-8 中文)与日文/繁体中文文件名(SJIS)都能正确显示。
+static unsigned int decode_any(const unsigned char *s, int *nbytes)
+{
+    unsigned char c = s[0];
+    if (c < 0x80) {
+        *nbytes = 1;
+        return c;
+    }
+    // --- 尝试 UTF-8 ---
+    if (c >= 0xC2 && c <= 0xDF) {                  // 2 字节
+        if ((s[1] & 0xC0) == 0x80) {
+            *nbytes = 2;
+            return ((c & 0x1F) << 6) | (s[1] & 0x3F);
+        }
+    } else if (c >= 0xE0 && c <= 0xEF) {           // 3 字节
+        if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+            *nbytes = 3;
+            return ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+        }
+    } else if (c >= 0xF0 && c <= 0xF4) {           // 4 字节
+        if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
+            *nbytes = 4;
+            return ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) |
+                   ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+        }
+    }
+    // --- 否则按 Shift-JIS 解析 (覆盖 0xE0-0xEF 但次字节非 UTF-8 续字节的情形) ---
+    return decode_sjis(s, nbytes);
+}
+
+// 计算字符串的显示像素宽度（ASCII=spacing，汉字/SJIS=2*spacing），用于自动缩放/截断
+static int text_display_width(const char *s, int spacing)
+{
+    int w = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        int nb;
+        decode_any(p, &nb);
+        w += (nb <= 1) ? spacing : (2 * spacing);
+        p += nb;
+    }
+    return w;
+}
+//---------------------------------------------------------------------------
+
 int printXY(const char *s, int x, int y, u64 colour, int draw, int space)
 {
 	unsigned int c1, c2;
@@ -157,21 +270,36 @@ int printXY(const char *s, int x, int y, u64 colour, int draw, int space)
 	int text_spacing = 8;
 
 	if (space > 0) {
-		while ((strlen(s) * text_spacing) > space)
+		while (text_display_width(s, text_spacing) > space)
 			if (--text_spacing <= 5)
 				break;
 	} else {
-		while ((strlen(s) * text_spacing) > SCREEN_WIDTH - SCREEN_MARGIN - FONT_WIDTH * 2)
+		while (text_display_width(s, text_spacing) > SCREEN_WIDTH - SCREEN_MARGIN - FONT_WIDTH * 2)
 			if (--text_spacing <= 5)
 				break;
 	}
 
 	i = 0;
 	while ((c1 = (unsigned char)s[i++]) != 0) {
-		if (c1 != 0xFF) {  // Normal character
-			if (draw)
-				drawChar(c1, x, y, colour);
-			x += text_spacing;
+		if (c1 != 0xFF) {  // Normal character (含 UTF-8 中文)
+			if (g_useUTF8 && c1 >= 0x80) {
+				// UTF-8 或 Shift-JIS 多字节序列 -> 从 font_cn 取汉字
+				int nb;
+				unsigned int cp = decode_any((const unsigned char *)s + i - 1, &nb);
+				int idx = cn_glyph_index(cp);
+				if (draw) {
+					if (idx >= 0)
+						drawCharCN(idx, x, y, colour);
+					else
+						drawChar('_', x, y, colour);
+				}
+				i += nb - 1;          // decode_char 已含首字节，补上剩余续字节
+				x += 2 * text_spacing;
+			} else {                  // ASCII / 单字节
+				if (draw)
+					drawChar(c1, x, y, colour);
+				x += text_spacing;
+			}
 			if (x > SCREEN_WIDTH - SCREEN_MARGIN - FONT_WIDTH)
 				break;
 			continue;
