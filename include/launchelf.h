@@ -1,3 +1,6 @@
+//---------------------------------------------------------------------------
+//File name:    launchelf.h (Modified for Default Chinese and English Only)
+//---------------------------------------------------------------------------
 #ifndef LAUNCHELF_H
 #define LAUNCHELF_H
 #define HACK_FOLDER "BXEXEC-OPENTUNA"
@@ -444,8 +447,6 @@ int printXY_sjis(const unsigned char *s, int x, int y, u64 colour, int);
 char *transcpy_sjis(char *d, const unsigned char *s);
 void loadIcon(void);
 int loadFont(char *path_arg);
-//Comment out WriteFont_C when not used (also requires patch in draw.c)
-//int	WriteFont_C(char *pathname);
 
 /* pad.c */
 #define PAD_R3_V0 0x010000
@@ -574,15 +575,8 @@ typedef struct Language
 } Language;
 
 enum BuiltinLanguage {
+	BUILTIN_LANGUAGE_CHINESE,
 	BUILTIN_LANGUAGE_ENGLISH,
-	BUILTIN_LANGUAGE_SPANISH,
-	BUILTIN_LANGUAGE_FRENCH,
-	BUILTIN_LANGUAGE_ITALIAN,
-	BUILTIN_LANGUAGE_POLISH,
-	BUILTIN_LANGUAGE_PORTUGUESE,
-	BUILTIN_LANGUAGE_BRAZILIAN,
-	BUILTIN_LANGUAGE_GERMAN,
-	BUILTIN_LANGUAGE_HUNGARIAN,
 	BUILTIN_LANGUAGE_COUNT
 };
 
@@ -628,26 +622,21 @@ const char *getBuiltinLanguageNativeName(int language);
 
 extern unsigned char font_uLE[];
 enum {
-	//0x100-0x109 are 5 double width characters for D-Pad buttons, which are accessed as:
-	//"ÿ0"==Circle  "ÿ1"==Cross  "ÿ2"==Square  "ÿ3"==Triangle  "ÿ4"==filled Square
-	RIGHT_CUR = 0x10A,  //Triangle pointing left, for use to the right of an item
-	LEFT_CUR = 0x10B,   //Triangle pointing right, for use to the left of an item
-	UP_ARROW = 0x10C,   //Arrow pointing up
-	DN_ARROW = 0x10D,   //Arrow pointing up
-	LT_ARROW = 0x10E,   //Arrow pointing up
-	RT_ARROW = 0x10F,   //Arrow pointing up
-	TEXT_CUR = 0x110,   //Vertical bar, for use between two text characters
-	UL_ARROW = 0x111,   //Arrow pointing up and to the left, from a vertical start.
-	BR_SPLIT = 0x112,   //Splits rectangle from BL to TR with BR portion filled
-	BL_SPLIT = 0x113,   //Splits rectangle from TL to BR with BL portion filled
-	                    //0x114-0x11B are 4 double width characters for D-Pad buttons, which are accessed as:
-	                    //"ÿ:"==Right  "ÿ;"==Down  "ÿ<"==Left  "ÿ="==Up
-	                    //0x11C-0x123 are 4 doubled characters used as normal/marked folder/file icons
+	RIGHT_CUR = 0x10A,  
+	LEFT_CUR = 0x10B,   
+	UP_ARROW = 0x10C,   
+	DN_ARROW = 0x10D,   
+	LT_ARROW = 0x10E,   
+	RT_ARROW = 0x10F,   
+	TEXT_CUR = 0x110,   
+	UL_ARROW = 0x111,   
+	BR_SPLIT = 0x112,   
+	BL_SPLIT = 0x113,   
 	ICON_FOLDER = 0x11C,
 	ICON_M_FOLDER = 0x11E,
 	ICON_FILE = 0x120,
 	ICON_M_FILE = 0x122,
-	FONT_COUNT = 0x124  //Total number of characters in font
+	FONT_COUNT = 0x124  
 };
 
 /* makeicon.c */
@@ -665,7 +654,7 @@ extern char USB_mass_ix[10];
 extern int USB_mass_max_drives;
 extern u64 USB_mass_scan_time;
 extern int USB_mass_scanned;
-extern int USB_mass_loaded;  //0==none, 1==internal, 2==external
+extern int USB_mass_loaded;  
 void loadUsbModules(void);
 int prepareUsbRootBrowse(void);
 int ensureUsbKeyboardReady(void);
