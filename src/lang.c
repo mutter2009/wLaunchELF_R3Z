@@ -1,59 +1,19 @@
 //---------------------------------------------------------------------------
-//File name:    lang.c
+//File name:    lang.c (Modified for Default Chinese and English Only)
 //---------------------------------------------------------------------------
 #include "launchelf.h"
 
+// 将默认语言（Lang_Default）直接指向中文语言包
 Language Lang_Default[] = {
 #define lang(id, name, value) {value},
+#include "../Lang/CHS.LNG"
+#undef lang
+    {NULL}};
+
+// 英文语言包作为备选
+static Language Lang_English[] = {
+#define lang(id, name, value) {value},
 #include "../Lang/ENG.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_Italian[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/ITA.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_Spanish[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/SPA.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_German[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/GER.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_Portuguese[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/POR.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_Brazilian[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/PTBR.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_Polish[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/POL.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_French[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/FRE.LNG"
-#undef lang
-    {NULL}};
-
-static Language Lang_Hungarian[] = {
-#define lang(id, name, value) {value},
-#include "../Lang/HUN.LNG"
 #undef lang
     {NULL}};
 
@@ -62,28 +22,17 @@ Language Lang_Extern[sizeof(Lang_Default) / sizeof(Lang_Default[0])];
 
 void *External_Lang_Buffer = NULL;
 
+// 缩减为只保留中文（默认）和英文两个选项
+#define BUILTIN_LANGUAGE_COUNT 2
+
 static const char *builtin_language_config_names[BUILTIN_LANGUAGE_COUNT] = {
+    "chinese",
     "english",
-    "spanish",
-    "french",
-    "italian",
-    "polish",
-    "portuguese",
-    "brazilian",
-    "german",
-    "hungarian",
 };
 
 static const char *builtin_language_native_names[BUILTIN_LANGUAGE_COUNT] = {
+    "简体中文",
     "English",
-    "Espanol",
-    "Francais",
-    "Italiano",
-    "Polski",
-    "Portugues",
-    "Portugues Brasileiro",
-    "Deutsch",
-    "Magyar",
 };
 
 int normalizeBuiltinLanguage(int language)
@@ -98,25 +47,11 @@ int normalizeBuiltinLanguage(int language)
 static Language *getBuiltinLanguageTable(int language)
 {
 	switch (normalizeBuiltinLanguage(language)) {
-		case BUILTIN_LANGUAGE_SPANISH:
-			return Lang_Spanish;
-		case BUILTIN_LANGUAGE_FRENCH:
-			return Lang_French;
-		case BUILTIN_LANGUAGE_ITALIAN:
-			return Lang_Italian;
-		case BUILTIN_LANGUAGE_POLISH:
-			return Lang_Polish;
-		case BUILTIN_LANGUAGE_PORTUGUESE:
-			return Lang_Portuguese;
-		case BUILTIN_LANGUAGE_BRAZILIAN:
-			return Lang_Brazilian;
-		case BUILTIN_LANGUAGE_GERMAN:
-			return Lang_German;
-		case BUILTIN_LANGUAGE_HUNGARIAN:
-			return Lang_Hungarian;
-		case BUILTIN_LANGUAGE_ENGLISH:
+		case 1:
+			return Lang_English;
+		case 0:
 		default:
-			return Lang_Default;
+			return Lang_Default; // 默认返回中文
 	}
 }
 
@@ -134,28 +69,10 @@ int getBuiltinLanguageByConfigName(const char *name)
 {
 	if (name == NULL || name[0] == '\0')
 		return -1;
-	if (!stricmp(name, "0") || !stricmp(name, "english") || !stricmp(name, "eng") || !stricmp(name, "en"))
-		return BUILTIN_LANGUAGE_ENGLISH;
-	if (!stricmp(name, "1") || !stricmp(name, "spanish") || !stricmp(name, "spa") || !stricmp(name, "es") || !stricmp(name, "espanol"))
-		return BUILTIN_LANGUAGE_SPANISH;
-	if (!stricmp(name, "2") || !stricmp(name, "french") || !stricmp(name, "fre") || !stricmp(name, "fra") ||
-	    !stricmp(name, "fr") || !stricmp(name, "francais"))
-		return BUILTIN_LANGUAGE_FRENCH;
-	if (!stricmp(name, "3") || !stricmp(name, "italian") || !stricmp(name, "ita") || !stricmp(name, "it") || !stricmp(name, "italiano"))
-		return BUILTIN_LANGUAGE_ITALIAN;
-	if (!stricmp(name, "4") || !stricmp(name, "polish") || !stricmp(name, "pol") || !stricmp(name, "pl") ||
-	    !stricmp(name, "polski"))
-		return BUILTIN_LANGUAGE_POLISH;
-	if (!stricmp(name, "5") || !stricmp(name, "portuguese") || !stricmp(name, "por") || !stricmp(name, "pt") || !stricmp(name, "portugues"))
-		return BUILTIN_LANGUAGE_PORTUGUESE;
-	if (!stricmp(name, "6") || !stricmp(name, "brazilian") || !stricmp(name, "brazil") || !stricmp(name, "br") ||
-	    !stricmp(name, "ptbr") || !stricmp(name, "pt-br") || !stricmp(name, "portuguese-br") ||
-	    !stricmp(name, "brazilian_portuguese"))
-		return BUILTIN_LANGUAGE_BRAZILIAN;
-	if (!stricmp(name, "7") || !stricmp(name, "german") || !stricmp(name, "ger") || !stricmp(name, "deu") || !stricmp(name, "de") || !stricmp(name, "deutsch"))
-		return BUILTIN_LANGUAGE_GERMAN;
-	if (!stricmp(name, "8") || !stricmp(name, "hungarian") || !stricmp(name, "hun") || !stricmp(name, "hu") || !stricmp(name, "magyar"))
-		return BUILTIN_LANGUAGE_HUNGARIAN;
+	if (!stricmp(name, "0") || !stricmp(name, "chinese") || !stricmp(name, "chs") || !stricmp(name, "zh") || !stricmp(name, "简体中文"))
+		return 0; // Chinese (Default)
+	if (!stricmp(name, "1") || !stricmp(name, "english") || !stricmp(name, "eng") || !stricmp(name, "en"))
+		return 1; // English
 	return -1;
 }
 
@@ -169,14 +86,6 @@ static void releaseExternalLanguageBuffer(void)
 
 //---------------------------------------------------------------------------
 // get_LANG_string is the main parser called for each language dependent
-// string in a language header file. (eg: "Francais.h" or "Francais.lng")
-// Call values for all input arguments should be addresses of string pointers
-// LANG_p_p is for file to be scanned, moved to point beyond scanned data.
-// id_p_p is for a string defining the index value (suitable for 'atoi')
-// value_p_p is for the string value itself (not NUL-terminated)
-// The function returns the length of each string found, but -1 at EOF,
-// and various error codes less than -1 (-2 etc) for various syntax errors,
-// which also applies to EOF occurring where valid macro parts are expected.
 //---------------------------------------------------------------------------
 int get_LANG_string(char **LANG_p_p, char **id_p_p, char **value_p_p)
 {
@@ -189,131 +98,116 @@ int get_LANG_string(char **LANG_p_p, char **id_p_p, char **value_p_p)
 
 start_line:
 	while (*tp <= ' ' && *tp > '\0')
-		tp += 1;  //Skip leading whitespace, if any
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
-	//Current pos is potential "lang(" entry, but we must verify this
-	if (tp[0] == '/' && tp[1] == '/')  //It may be a comment line
-	{                                  //We must skip a comment line
+		goto exit;
+	if (tp[0] == '/' && tp[1] == '/') {
 		while (*tp != '\r' && *tp != '\n' && *tp > '\0')
-			tp += 1;      //Seek line end
-		goto start_line;  //Go back to try next line
+			tp += 1;
+		goto start_line;
 	}
 	ret = -2;
-	//Here tp points to a non-zero string that is not a comment
 	if (strncmp(tp, "lang", 4))
-		goto exit;  //Return error if not 'lang' macro
-	tp += 4;        //but if it is, step past that name
+		goto exit;
+	tp += 4;
 	ret = -3;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 	ret = -4;
-	//Here tp points to a non-zero string that should be an opening parenthesis
 	if (*tp != '(')
-		goto exit;  //Return error if no opening parenthesis
-	tp += 1;        //but if it is, step past this character
+		goto exit;
+	tp += 1;
 	ret = -5;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 	ret = -6;
-	//Here tp points to a non-zero string that should be an index number
 	if (*tp < '0' || *tp > '9')
-		goto exit;  //Return error if it's not a number
-	ip = tp;        //but if it is, save this pos as id start
+		goto exit;
+	ip = tp;
 	while (*tp >= '0' && *tp <= '9')
-		tp += 1;  //skip past the index number
+		tp += 1;
 	ret = -7;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 	ret = -8;
-	//Here tp points to a non-zero string that should be a comma
 	if (*tp != ',')
-		goto exit;  //Return error if no comma after index
-	tp += 1;        //but if present, step past that comma
+		goto exit;
+	tp += 1;
 	ret = -9;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 	ret = -10;
-	//Here tp points to a non-zero string that should be a symbolic string name
-	//But we don't need to process this for language switch purposes, so we ignore it
-	//This may be changed later, to use the name for generating error messages
 	while (*tp != ',' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //seek inline comma
+		tp += 1;
 	if (*tp != ',')
-		goto exit;  //Return error if no comma after string name
-	tp += 1;        //but if present, step past that comma
+		goto exit;
+	tp += 1;
 	ret = -11;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 	ret = -12;
-	//Here tp points to a non-zero string that should be the opening quote character
 	if (*tp != '\"')
-		goto exit;  //Return error if no opening quote
-	tp += 1;        //but if present, step past that quote
+		goto exit;
+	tp += 1;
 	ret = -13;
-	vp = tp;  //save this pos as value start
+	vp = tp;
 close_quote:
 	while (*tp != '\"' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //seek inline quote
+		tp += 1;
 	if (*tp != '\"')
-		return -13;  //Return error if no closing quote
-	cp = tp - 1;     //save previous pos as check pointer
-	tp += 1;         //step past the quote character
+		return -13;
+	cp = tp - 1;
+	tp += 1;
 	if (*cp == '\\')
-		goto close_quote;  //if this was an 'escaped' quote, try again
-	//Here tp points to the character after the closing quote.
-	length = (tp - 1) - vp;  //prepare string length for return value
+		goto close_quote;
+	length = (tp - 1) - vp;
 	ret = -14;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 	ret = -15;
-	//Here tp points to a non-zero string that should be closing parenthesis
 	if (*tp != ')')
-		goto exit;  //Return error if no closing parenthesis
-	tp += 1;        //but if present, step past the parenthesis
+		goto exit;
+	tp += 1;
 	ret = -16;
 	while (*tp <= ' ' && *tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //skip inline whitespace
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
-	//Here tp points to a non-zero string that should be line end or a comment
+		goto exit;
 	if (tp[0] != '/' || tp[1] != '/')
-		goto finish_line;  //if no comment, go handle line end
+		goto finish_line;
 	ret = -17;
 	while (*tp != '\r' && *tp != '\n' && *tp > '\0')
-		tp += 1;  //Seek line end
+		tp += 1;
 	if (*tp == '\0')
-		goto exit;  //but exit at EOF
+		goto exit;
 finish_line:
 	ret = -18;
 	if (*tp != '\r' && *tp != '\n')
-		goto exit;  //Return error if not valid line end
+		goto exit;
 	if (tp[0] == '\r' && tp[1] == '\n')
-		tp += 1;  //Step an extra pos for CR+LF
-	tp += 1;      //Step past valid line end
-	//Here tp points beyond the line of the processed string, so we're done
+		tp += 1;
+	tp += 1;
 	ret = length;
 
 exit:
-	*LANG_p_p = tp;   //return new LANG file position
-	*id_p_p = ip;     //return found index
-	*value_p_p = vp;  //return found string value
-	return ret;       //return control to caller
+	*LANG_p_p = tp;
+	*id_p_p = ip;
+	*value_p_p = vp;
+	return ret;
 }
-//Ends get_LANG_string
-//---------------------------------------------------------------------------
+
 static int copy_LANG_value(char *dst, const char *src, int len)
 {
 	int si;
@@ -372,7 +266,7 @@ static void updateLocalizedMiscPaths(void)
 	default_misc_len = strlen(default_misc);
 
 	if (strlen(setting->Misc) > 0) {
-		for (i = 0; i < 16; i++) {  //Loop to rename the ELF paths with new language for launch keys
+		for (i = 0; i < 16; i++) {
 			if ((i < 12) || (setting->LK_Flag[i] != 0)) {
 				if (!strncmp(setting->LK_Path[i], setting->Misc, strlen(setting->Misc)) ||
 				    !strncmp(setting->LK_Path[i], default_misc, default_misc_len)) {
@@ -410,10 +304,10 @@ static void updateLocalizedMiscPaths(void)
 						sprintf(setting->LK_Path[i], "%s/%s", LNG(MISC), LNG(Exploit_Installer));
 					else if (isMiscLaunchNameAlias(tmp + 1, setting->Misc_Reboot_IOP, LNG_DEF(Reboot_IOP)))
 						sprintf(setting->LK_Path[i], "%s/%s", LNG(MISC), LNG(Reboot_IOP));
-				}  // end if Misc
-			}      // end if LK assigned
-		}          // end for
-	}              // end if Misc Initialized
+				}
+			}
+		}
+	}
 
 	sprintf(setting->Misc, "%s/", LNG(MISC));
 	sprintf(setting->Misc_PS2Disc, "%s/%s", LNG(MISC), LNG(PS2Disc));
@@ -432,13 +326,12 @@ static void updateLocalizedMiscPaths(void)
 	sprintf(setting->Misc_Exploit_Installer, "%s/%s", LNG(MISC), LNG(Exploit_Installer));
 	sprintf(setting->Misc_Reboot_IOP, "%s/%s", LNG(MISC), LNG(Reboot_IOP));
 }
-//---------------------------------------------------------------------------
+
 void Init_Default_Language(void)
 {
 	memcpy(Lang_String, Lang_Default, sizeof(Lang_String));
 }
-//Ends Init_Default_Language
-//---------------------------------------------------------------------------
+
 void Set_Language(int language)
 {
 	releaseExternalLanguageBuffer();
@@ -447,8 +340,7 @@ void Set_Language(int language)
 	memcpy(Lang_String, getBuiltinLanguageTable(language), sizeof(Lang_String));
 	updateLocalizedMiscPaths();
 }
-//Ends Set_Language
-//---------------------------------------------------------------------------
+
 void Load_External_Language(void)
 {
 	int error_id = -1;
@@ -463,19 +355,18 @@ void Load_External_Language(void)
 
 	releaseExternalLanguageBuffer();
 
-	Lang = getBuiltinLanguageTable(setting != NULL ? setting->language : BUILTIN_LANGUAGE_ENGLISH);
+	Lang = getBuiltinLanguageTable(setting != NULL ? setting->language : 0);
 	memcpy(Lang_String, Lang, sizeof(Lang_String));
 
-	if (setting != NULL && strlen(setting->lang_file) != 0) {  //if language file string set
-
+	if (setting != NULL && strlen(setting->lang_file) != 0) {
 		error_id = -2;
 		genFixPath(setting->lang_file, filePath);
 		fd = genOpen(filePath, FIO_O_RDONLY);
-		if (fd >= 0) {  //if file opened OK
+		if (fd >= 0) {
 			int file_size = genLseek(fd, 0, SEEK_END);
 
 			error_id = -3;
-			if (file_size > 0) {  //if file size OK
+			if (file_size > 0) {
 				error_id = -4;
 				file_bp = malloc(file_size + 1);
 				if (file_bp == NULL)
@@ -485,31 +376,28 @@ void Load_External_Language(void)
 				genLseek(fd, 0, SEEK_SET);
 				if (genRead(fd, file_bp, file_size) != file_size)
 					goto release_1;
-				file_bp[file_size] = '\0';  //enforce termination at buffer end
+				file_bp[file_size] = '\0';
 
 				error_id = -6;
 				file_tp = file_bp;
 				while (1) {
 					oldf_tp = file_tp;
 					test = get_LANG_string(&file_tp, &id_p, &value_p);
-					if (test == -1)           //if EOF reached without other error
-						break;                //break from the loop normally
-					if (test < 0)             //At any fatal error result
-						goto release_1;       //go release file buffer
-					index = atoi(id_p);       //get the string index
-					if (index >= LANG_COUNT)  //At any fatal error result
-						goto release_1;       //go release file buffer
-					lang_size += test + 1;    //Include terminator space for total size
+					if (test == -1)
+						break;
+					if (test < 0)
+						goto release_1;
+					index = atoi(id_p);
+					if (index >= LANG_COUNT)
+						goto release_1;
+					lang_size += test + 1;
 				}
-				//Here lang_size is the space needed for real language buffer,
 
 				error_id = -7;
-				lang_bp = malloc(lang_size + 1);  //allocate real language buffer
+				lang_bp = malloc(lang_size + 1);
 				if (lang_bp == NULL)
 					goto release_1;
 
-				//We're ready to read language strings, but must first init all pointers
-				//to use default strings, for any indexes left undefined by the file
 				memcpy(Lang_Extern, Lang, sizeof(Lang_Extern));
 
 				file_tp = file_bp;
@@ -517,21 +405,21 @@ void Load_External_Language(void)
 				while ((test = get_LANG_string(&file_tp, &id_p, &value_p)) >= 0) {
 					int decoded_len;
 
-					index = atoi(id_p);                   //get the string index
-					Lang_Extern[index].String = lang_tp;  //save pointer to this string base
+					index = atoi(id_p);
+					Lang_Extern[index].String = lang_tp;
 					decoded_len = copy_LANG_value(lang_tp, value_p, test);
-					lang_tp += decoded_len + 1;           //move dest pointer past this string
+					lang_tp += decoded_len + 1;
 				}
-				External_Lang_Buffer = lang_bp;  //Save base pointer for releases
+				External_Lang_Buffer = lang_bp;
 				Lang = Lang_Extern;
 				error_id = 0;
 			release_1:
 				free(file_bp);
-			}  // end if clause for file size OK
+			}
 		aborted_1:
 			genClose(fd);
-		}  // end if clause for file opened OK
-	}      // end if language file string set
+		}
+	}
 
 	if (error_id < -1) {
 		char tmp_s[4096], t1_s[102], t2_s[102];
@@ -542,13 +430,13 @@ void Load_External_Language(void)
 		        "%n",
 		        error_id, test, index, &stp);
 		pos += stp;
-		if (error_id == -2) {  //if file open failure
+		if (error_id == -2) {
 			sprintf(tmp_s + pos,
 			        "This was a failure to open the file:\n"
 			        "\"%s\"\n",
 			        filePath);
 		}
-		if (error_id == -6) {  //if parsing error
+		if (error_id == -6) {
 			strncpy(t1_s, oldf_tp, 100);
 			t1_s[100] = '\0';
 			strncpy(t2_s, file_tp, 100);
@@ -567,7 +455,6 @@ void Load_External_Language(void)
 	memcpy(Lang_String, Lang, sizeof(Lang_String));
 	updateLocalizedMiscPaths();
 }
-//Ends Load_External_Language
 //---------------------------------------------------------------------------
 //End of file:  lang.c
 //---------------------------------------------------------------------------
