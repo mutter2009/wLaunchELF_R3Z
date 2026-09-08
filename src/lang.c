@@ -3,6 +3,10 @@
 //---------------------------------------------------------------------------
 #include "launchelf.h"
 
+// 当前语言是否为中文(UTF-8)。为 1 时 draw_text.c 的 printXY 会按 UTF-8 解码中文。
+// 由本文件在各语言切换/加载处维护，draw_text.c 中以 extern 引用。
+int g_useUTF8 = 0;
+
 // 将默认语言（Lang_Default）直接指向中文语言包
 Language Lang_Default[] = {
 #define lang(id, name, value) {value},
@@ -330,6 +334,7 @@ static void updateLocalizedMiscPaths(void)
 void Init_Default_Language(void)
 {
 	memcpy(Lang_String, Lang_Default, sizeof(Lang_String));
+	g_useUTF8 = 1;   // 默认语言为中文
 }
 
 void Set_Language(int language)
@@ -338,6 +343,7 @@ void Set_Language(int language)
 	if (setting != NULL)
 		setting->language = normalizeBuiltinLanguage(language);
 	memcpy(Lang_String, getBuiltinLanguageTable(language), sizeof(Lang_String));
+	g_useUTF8 = (normalizeBuiltinLanguage(language) == 0) ? 1 : 0;  // 0=中文
 	updateLocalizedMiscPaths();
 }
 
@@ -425,7 +431,7 @@ void Load_External_Language(void)
 		char tmp_s[4096], t1_s[102], t2_s[102];
 		int pos = 0, stp = 0;
 		sprintf(tmp_s,
-		        "LNG loading failed with error_id==%d and test==%d\n"
+		        "LNG loading failed with error_id==%d and test==d\n"
 		        "The latest string index (possibly invalid) was %d\n"
 		        "%n",
 		        error_id, test, index, &stp);
@@ -453,6 +459,7 @@ void Load_External_Language(void)
 	}
 
 	memcpy(Lang_String, Lang, sizeof(Lang_String));
+	g_useUTF8 = (setting != NULL && normalizeBuiltinLanguage(setting->language) == 0) ? 1 : 0;
 	updateLocalizedMiscPaths();
 }
 //---------------------------------------------------------------------------
