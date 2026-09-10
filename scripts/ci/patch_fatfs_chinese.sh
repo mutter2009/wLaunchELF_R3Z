@@ -6,8 +6,9 @@
 #   1. 定位 PS2SDK 源码树（$PS2SDKSRC），并确保 FatFs 外部依赖已下载。
 #   2. 只 sed 修改 ffconf.h 的宏数值，不动其它行；不 `make clean`、不强制
 #      重新 `download_dependencies`（如果源码已存在，避免把 patch 覆盖掉）。
-#   3. 用 ps2sdk 标准 `make -C $PS2SDKSRC/<模块> all install` 从源码重新编译
-#      bdm / bdmfs_fatfs / usbmass_bd，把 936 版 IRX 安装到 $PS2SDK/iop/irx。
+#   3. 用 `make -C $PS2SDKSRC/<模块> all` 从源码重新编译 bdm / bdmfs_fatfs /
+#      usbmass_bd，然后手动把生成的 IRX 复制到 $PS2SDK/iop/irx（这些模块
+#      的 Makefile 没有 install 目标）。
 #=============================================================================
 set -u
 
@@ -100,31 +101,53 @@ touch "$FATSRC"/source/*.c 2>/dev/null || true
 touch "$PS2SDKSRC"/iop/fs/bdmfs_fatfs/src/*.c 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 5) 从源码重新编译并安装存储模块 IRX 到 $PS2SDK/iop/irx/
-#    注意：模块源码在 $PS2SDKSRC，编译产物通过 Rules.release 安装到 $PS2SDK。
+# 5) 从源码重新编译模块，并手动把生成的 IRX 复制到 $PS2SDK/iop/irx/
+#    注意：这些 IOP 模块的 Makefile 只有 all 目标，没有 install 目标。
 # ---------------------------------------------------------------------------
+mkdir -p "$PS2SDK/iop/irx"
+
 rebuild_module() {
   mod="$1"
+  name="$2"
   echo "Building $mod ..."
-  if make -C "$PS2SDKSRC/$mod" all install 2>&1; then
-    echo "  OK: built and installed $mod"
+  if make -C "$PS2SDKSRC/$mod" all 2>&1; then
+    echo "  OK: built $mod"
   else
-    echo "  WARN: 'make -C $PS2SDKSRC/$mod all install' failed"
+    echo "  WARN: 'make -C $PS2SDKSRC/$mod all' failed"
+    return 1
+  fi
+
+  src_irx="$PS2SDKSRC/$mod/irx/$name.irx"
+  dst_irx="$PS2SDK/iop/irx/$name.irx"
+  if [ -f "$src_irx" ]; then
+    cp -f "$src_irx" "$dst_irx" || {
+      echo "  WARN: failed to copy $src_irx -> $dst_irx"
+      return 1
+    }
+    echo "  OK: installed $name.irx -> $PS2SDK/iop/irx/"
+  else
+    echo "  WARN: expected IRX not found at $src_irx"
     return 1
   fi
 }
 
 ok=1
-rebuild_module iop/fs/bdm          || ok=0
-rebuild_module iop/fs/bdmfs_fatfs  || ok=0
-rebuild_module iop/usb/usbmass_bd  || ok=0
+rebuild_module iop/fs/bdm          bdm          || ok=0
+rebuild_module iop/fs/bdmfs_fatfs  bdmfs_fatfs  || ok=0
+rebuild_module iop/usb/usbmass_bd  usbmass_bd   || ok=0
 
 # ---------------------------------------------------------------------------
-# 6) 兜底：若单个模块编译失败，整体编译 iop 层
+# 6) 兜底：若单个模块编译失败，整体编译 iop 层，然后复制关键 IRX
 # ---------------------------------------------------------------------------
 if [ "$ok" -eq 0 ]; then
   echo "Falling back to full 'make -C $PS2SDKSRC iop' ..."
   make -C "$PS2SDKSRC" iop 2>&1 || echo "WARN: 'make iop' also failed; check toolchain env"
+  for mod in iop/fs/bdm iop/fs/bdmfs_fatfs iop/usb/usbmass_bd; do
+    name="$(basename "$mod")"
+    src_irx="$PS2SDKSRC/$mod/irx/$name.irx"
+    dst_irx="$PS2SDK/iop/irx/$name.irx"
+    [ -f "$src_irx" ] && cp -f "$src_irx" "$dst_irx" && echo "  OK: copied $name.irx (fallback)"
+  done
 fi
 
 # ---------------------------------------------------------------------------
