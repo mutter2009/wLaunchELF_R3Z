@@ -2261,29 +2261,51 @@ static unsigned int decode_any(const unsigned char *s, int *nbytes)
         *nbytes = 1;
         return c;
     }
-    // --- 尝试 UTF-8 ---
+    // --- 先尝试按 UTF-8 解析（源码常量、3/4 字节中文与 emoji）---
+    unsigned int utf8_cp = 0;
+    int utf8_nb = 0;
+    int is_utf8 = 0;
     if (c >= 0xC2 && c <= 0xDF) {                  // 2 字节
         if ((s[1] & 0xC0) == 0x80) {
-            *nbytes = 2;
-            return ((c & 0x1F) << 6) | (s[1] & 0x3F);
+            utf8_cp = ((c & 0x1F) << 6) | (s[1] & 0x3F);
+            utf8_nb = 2;
+            is_utf8 = 1;
         }
     } else if (c >= 0xE0 && c <= 0xEF) {           // 3 字节
         if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
-            *nbytes = 3;
-            return ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+            utf8_cp = ((c & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+            utf8_nb = 3;
+            is_utf8 = 1;
         }
     } else if (c >= 0xF0 && c <= 0xF4) {           // 4 字节
         if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
-            *nbytes = 4;
-            return ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) |
-                   ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+            utf8_cp = ((c & 0x07) << 18) | ((s[1] & 0x3F) << 12) |
+                      ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+            utf8_nb = 4;
+            is_utf8 = 1;
         }
     }
-    // --- 不是 UTF-8：中文环境优先按 GBK 解析（Windows 中文版 USB 驱动常见），否则直接 SJIS ---
+    if (is_utf8) {
+        // UTF-8 序列合法：若字体中确实存在该码点（如中文/日文常量），直接采用
+        if (cn_glyph_index(utf8_cp) >= 0) {
+            *nbytes = utf8_nb;
+            return utf8_cp;
+        }
+        // 字体里没有：很可能是把 GBK 双字节误判成了 UTF-8（Windows 中文 USB 文件名常见），
+        // 在中文环境下回退到 GBK 重新解码，避免显示成下划线。
+        if (g_useUTF8) {
+            unsigned int gcp = decode_gbk(s, nbytes);
+            if (*nbytes == 2 && gcp != 0xFFFD)
+                return gcp;
+        }
+        *nbytes = utf8_nb;
+        return utf8_cp;
+    }
+    // --- 不是合法 UTF-8 结构：中文环境优先按 GBK 解析（FAT 长名多为 GBK），否则按 Shift-JIS ---
     if (g_useUTF8) {
-        unsigned int cp = decode_gbk(s, nbytes);
-        if (*nbytes != 1)
-            return cp;
+        unsigned int gcp = decode_gbk(s, nbytes);
+        if (*nbytes == 2 && gcp != 0xFFFD)
+            return gcp;
     }
     return decode_sjis(s, nbytes);
 }
