@@ -8,23 +8,23 @@ enum {
 	DEF_TIMEOUT = 10,
 	DEF_HIDE_PATHS = TRUE,
 #ifdef CUSTOM_COLORS
-	DEF_COLOR1 = GS_SETREG_RGBA(0xa0, 0xa0, 0xa0, 0),  //Backgr 深灰
-	DEF_COLOR2 = GS_SETREG_RGBA(0x35, 0x35, 0x35, 0),  //Frame 中灰
+	DEF_COLOR1 = GS_SETREG_RGBA(0xa0, 0xa0, 0xa0, 0),  //Backgr
+	DEF_COLOR2 = GS_SETREG_RGBA(0x35, 0x35, 0x35, 0),  //Frame
 	DEF_COLOR3 = GS_SETREG_RGBA(0x30, 0x30, 0xb0, 0),  //Select
-	DEF_COLOR4 = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0),  //Text 亮灰白
-	DEF_COLOR5 = GS_SETREG_RGBA(0xf0, 0xe0, 0x30, 0),  //Folders
-	DEF_COLOR6 = GS_SETREG_RGBA(0x00, 0x90, 0x00, 0),  //ELFs 亮绿
+	DEF_COLOR4 = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0),  //Text
+	DEF_COLOR5 = GS_SETREG_RGBA(0xf0, 0xd0, 0x30, 0),  //Folders
+	DEF_COLOR6 = GS_SETREG_RGBA(0x00, 0xc0, 0x00, 0),  //ELFs
 	DEF_COLOR7 = GS_SETREG_RGBA(0xe0, 0xe0, 0xe0, 0),  //Unknown
-	DEF_COLOR8 = GS_SETREG_RGBA(0xc0, 0x90, 0x90, 0),  //TextEditor
+	DEF_COLOR8 = GS_SETREG_RGBA(0x90, 0x70, 0x60, 0),  //TextEditor
 #else
 	DEF_COLOR1 = GS_SETREG_RGBA(0xa0, 0xa0, 0xa0, 0),              //Backgr
 	DEF_COLOR2 = GS_SETREG_RGBA(0x35, 0x35, 0x35, 0),     //Frame
 	DEF_COLOR3 = GS_SETREG_RGBA(0x30, 0x30, 0xb0, 0),     //Select
 	DEF_COLOR4 = GS_SETREG_RGBA(0x00, 0x00, 0x00, 0),     //Text
-	DEF_COLOR5 = GS_SETREG_RGBA(0xf0, 0xe0, 0x30, 0),     //Folders
-	DEF_COLOR6 = GS_SETREG_RGBA(0x00, 0x90, 0x00, 0),        //ELFs
+	DEF_COLOR5 = GS_SETREG_RGBA(0xf0, 0xd0, 0x30, 0),     //Folders
+	DEF_COLOR6 = GS_SETREG_RGBA(0x00, 0xc0, 0x00, 0),        //ELFs
 	DEF_COLOR7 = GS_SETREG_RGBA(0xe0, 0xe0, 0xe0, 0),     //Unknown
-	DEF_COLOR8 = GS_SETREG_RGBA(0xc0, 0x90, 0x90, 0),     //TextEditor
+	DEF_COLOR8 = GS_SETREG_RGBA(0x90, 0x70, 0x60, 0),     //TextEditor
 #endif //CUSTOM_COLORS
 	DEF_MENU_FRAME = TRUE,
 	DEF_SWAPKEYS = FALSE,  // FALSE => 圆圈(O)确认、X取消(亚洲习惯);TRUE => X确认(西方)
