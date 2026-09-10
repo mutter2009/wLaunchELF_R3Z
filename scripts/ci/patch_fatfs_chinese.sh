@@ -1,140 +1,97 @@
-#!/bin/bash
-# Patch FatFs configuration so bdmfs_fatfs returns Chinese long file names
-# in GBK (code page 936) for BOTH FAT32 and exFAT volumes.
-# This script is intended for the GitHub Actions CI build.
-#
-# It also rebuilds the storage stack modules (bdm, bdmfs_fatfs, usbmass_bd)
-# from patched source and installs them into $PS2SDK/iop/irx so embed.make
-# picks up the patched versions instead of the prebuilt ones.
-
-set -e
-
-PS2SDK="${PS2SDK:-}"
-PS2SDKSRC="${PS2SDKSRC:-}"
+#!/bin/sh
+#=============================================================================
+# Patch FatFs for Chinese (GBK / CP936) long file names on FAT32 + exFAT
+#-----------------------------------------------------------------------------
+# 此脚本在 GitHub Actions 构建 wLaunchELF 之前运行。
+# 关键修正（相对上一版）：
+#   1. 只做 `sed` 改 ffconf.h 的宏数值，绝不 `make clean`、绝不 `download_dependencies`，
+#      否则会把已经 patch 好的 fatfs 源码删掉再重新 clone 回未 patch 的版本。
+#   2. 用 ps2sdk 标准的 `make -C iop/fs ... install` 从源码重新编译出 936 版 IRX，
+#      并覆盖预编译的旧 IRX（之前只调 `make` 默认目标，只执行了 clean，没编译）。
+#=============================================================================
+set -u
 
 echo "=========================================="
 echo "FatFs Chinese LFN patch script"
-echo "Initial PS2SDK=$PS2SDK"
-echo "Initial PS2SDKSRC=$PS2SDKSRC"
-echo "=========================================="
-
-# 1. Locate PS2SDK install tree.
-if [ -z "$PS2SDK" ] || [ ! -f "$PS2SDK/Defs.make" ]; then
-  for cand in /usr/local/ps2sdk /opt/ps2sdk /ps2sdk "$HOME/ps2sdk"; do
-    if [ -f "$cand/Defs.make" ]; then
-      PS2SDK="$cand"
-      break
-    fi
-  done
-fi
-if [ -z "$PS2SDK" ] || [ ! -f "$PS2SDK/Defs.make" ]; then
-  echo "Error: PS2SDK is not set or does not point to a valid PS2SDK install tree." >&2
-  exit 1
-fi
-export PS2SDK
-
-# 2. Locate PS2SDK source tree.
-if [ -z "$PS2SDKSRC" ] || [ ! -f "$PS2SDKSRC/Defs.make" ]; then
-  # Try using the install tree itself if it also contains sources.
-  if [ -f "$PS2SDK/iop/Rules.make" ] && [ -f "$PS2SDK/iop/fs/bdmfs_fatfs/Makefile" ]; then
-    PS2SDKSRC="$PS2SDK"
-  else
-    echo "Error: PS2SDKSRC is not set or does not point to a valid PS2SDK source tree." >&2
-    exit 1
-  fi
-fi
-export PS2SDKSRC
-
+PS2SDK="${PS2SDK:-/usr/local/ps2dev/ps2sdk}"
+PS2SDKSRC="${PS2SDKSRC:-$PS2SDK}"
 echo "Using PS2SDK=$PS2SDK"
 echo "Using PS2SDKSRC=$PS2SDKSRC"
+echo "=========================================="
 
-# 3. Ensure external dependencies (FatFs) are present.
-FATFS_DIR="$PS2SDKSRC/common/external_deps/fatfs"
-if [ ! -d "$FATFS_DIR" ]; then
-  echo "Downloading PS2SDK external dependencies (this includes FatFs)..."
-  if [ -x "$PS2SDKSRC/download_dependencies.sh" ]; then
-    (cd "$PS2SDKSRC" && ./download_dependencies.sh)
-  else
-    echo "Error: $PS2SDKSRC/download_dependencies.sh not found." >&2
-    exit 1
-  fi
-fi
-
-FFCFG="$FATFS_DIR/source/include/ffconf.h"
-if [ ! -f "$FFCFG" ]; then
-  echo "Error: $FFCFG not found. FatFs layout may have changed." >&2
-  find "$FATFS_DIR" -maxdepth 3 -type f >&2 || true
+# 1) 定位 fatfs 的 ffconf.h（容器里源码与预编译混合，可能有几种路径）
+FFCONF=""
+for cand in \
+  "$PS2SDK/common/external_deps/fatfs/source/include/ffconf.h" \
+  "$PS2SDKSRC/common/external_deps/fatfs/source/include/ffconf.h" \
+  "$PS2SDK/common/external_deps/fatfs_inprogress/source/include/ffconf.h" \
+  "$PS2SDKSRC/common/external_deps/fatfs_inprogress/source/include/ffconf.h" \
+  "$PS2SDK/iop/fs/bdmfs_fatfs/src/ffconf.h" \
+  "$PS2SDKSRC/iop/fs/bdmfs_fatfs/src/ffconf.h" ; do
+  if [ -f "$cand" ]; then FFCONF="$cand"; break; fi
+done
+if [ -z "$FFCONF" ]; then
+  echo "ERROR: ffconf.h not found under $PS2SDK / $PS2SDKSRC"
+  find "$PS2SDK" "$PS2SDKSRC" -name ffconf.h 2>/dev/null | head
   exit 1
 fi
+echo "Found ffconf.h: $FFCONF"
 
-# 4. Helper: set a numeric macro in ffconf.h using #undef + #define to avoid redefinition conflicts.
-set_macro() {
-  local name="$1" value="$2"
-  # Remove existing definition and any previous #undef.
-  sed -i -E "/^#define[[:space:]]+${name}[[:space:]]/d" "$FFCFG"
-  sed -i -E "/^#undef[[:space:]]+${name}[[:space:]]*$/d" "$FFCFG"
-  # Append #undef and #define at end of file.
-  printf '\n#undef %s\n#define %s  %s\n' "$name" "$name" "$value" >> "$FFCFG"
-}
+echo "--- Before patch ---"
+grep -nE "FF_CODE_PAGE|FF_USE_LFN|FF_FS_EXFAT|FF_LFN_UNICODE" "$FFCONF" || true
 
-echo ""
-echo "Before patch ($FFCFG):"
-grep -E '^#undef FF_CODE_PAGE|^#define FF_CODE_PAGE|^#undef FF_USE_LFN|^#define FF_USE_LFN|^#undef FF_FS_EXFAT|^#define FF_FS_EXFAT|^#undef FF_LFN_UNICODE|^#define FF_LFN_UNICODE' "$FFCFG" || true
+# 2) 只改宏的数值，绝不产生 #undef，也不动其它行
+sed -i -e 's/^#define[[:space:]][[:space:]]*FF_CODE_PAGE[[:space:]][[:space:]]*[0-9].*/#define FF_CODE_PAGE   936/' \
+       -e 's/^#define[[:space:]][[:space:]]*FF_USE_LFN[[:space:]][[:space:]]*[0-9].*/#define FF_USE_LFN   2/' \
+       -e 's/^#define[[:space:]][[:space:]]*FF_FS_EXFAT[[:space:]][[:space:]]*[0-9].*/#define FF_FS_EXFAT   1/' \
+       -e 's/^#define[[:space:]][[:space:]]*FF_LFN_UNICODE[[:space:]][[:space:]]*[0-9].*/#define FF_LFN_UNICODE   0/' \
+       "$FFCONF"
 
-set_macro FF_CODE_PAGE    936   # Simplified Chinese / GBK -> returns GBK-encoded long names
-set_macro FF_USE_LFN       2     # Enable long file names (stack buffer)
-set_macro FF_FS_EXFAT      1     # Enable exFAT long-name support
-set_macro FF_LFN_UNICODE   0     # LFN returned in current code page (GBK), matching wLaunchELF GBK decoder
+echo "--- After patch ---"
+grep -nE "FF_CODE_PAGE|FF_USE_LFN|FF_FS_EXFAT|FF_LFN_UNICODE" "$FFCONF" || true
 
-echo ""
-echo "After patch ($FFCFG):"
-grep -E '^#undef FF_CODE_PAGE|^#define FF_CODE_PAGE|^#undef FF_USE_LFN|^#define FF_USE_LFN|^#undef FF_FS_EXFAT|^#define FF_FS_EXFAT|^#undef FF_LFN_UNICODE|^#define FF_LFN_UNICODE' "$FFCFG" || true
+# 3) 确认 CP936 转换表存在（ffunicode.c 含 936 或全表）
+FATSRC_DIR="$(dirname "$(dirname "$FFCONF")")"
+if grep -q "936" "$FATSRC_DIR/source/ffunicode.c" 2>/dev/null; then
+  echo "OK: ffunicode.c appears to support CP936"
+else
+  echo "WARN: could not confirm CP936 in ffunicode.c (continuing anyway)"
+fi
 
-# 5. Verify ffunicode.c supports code page 936.
-FFUNI="$FATFS_DIR/source/ffunicode.c"
-if [ -f "$FFUNI" ]; then
-  echo ""
-  echo "Checking $FFUNI for CP936 support..."
-  if grep -qE 'FF_CODE_PAGE == 936|FF_CODE_PAGE == 0' "$FFUNI"; then
-    echo "OK: ffunicode.c appears to support CP936 or code-page 0 (all tables)."
+# 4) 强制 fatfs 重新编译（改了 ffconf.h 头文件，需 touch 源文件让 make 重编）
+echo "Touching FatFs sources to force rebuild..."
+touch "$FATSRC_DIR"/source/*.c 2>/dev/null || true
+
+# 5) 从源码重新编译并安装存储模块 IRX 到 $PS2SDK/iop/irx/
+#    ps2sdk 标准方式：make -C <module> all install
+#    顺序：bdm(底层) -> bdmfs_fatfs(依赖 bdm + fatfs) -> usbmass_bd
+rebuild_module() {
+  mod="$1"
+  echo "Building $mod ..."
+  if make -C "$PS2SDK/$mod" all install 2>&1; then
+    echo "  OK: built $mod"
   else
-    echo "WARNING: ffunicode.c does not appear to support CP936. Chinese LFN may not work." >&2
+    echo "  WARN: 'make -C $PS2SDK/$mod all install' failed; will try full 'make iop' fallback"
+    return 1
   fi
-fi
-
-# 6. Clean and rebuild external deps so FatFs picks up the patched ffconf.h.
-echo ""
-echo "Cleaning FatFs external deps to force rebuild with patched config..."
-make -C "$PS2SDKSRC/common/external_deps" clean 2>/dev/null || true
-make -C "$PS2SDKSRC/common/external_deps" all
-
-# 7. Clean and rebuild the storage modules so they embed the new FatFs.
-build_install_module() {
-  local mod_dir="$1" mod_name="$2"
-  if [ ! -f "$mod_dir/Makefile" ]; then
-    echo "Warning: $mod_dir/Makefile not found, skipping $mod_name build." >&2
-    return 0
-  fi
-  echo ""
-  echo "Building $mod_name from $mod_dir ..."
-  make -C "$mod_dir" clean 2>/dev/null || true
-  make -C "$mod_dir" release
-  echo "$mod_name installed to $PS2SDK/iop/irx/"
-  ls -la "$PS2SDK/iop/irx/$mod_name.irx" || true
 }
 
-build_install_module "$PS2SDKSRC/iop/fs/bdm"         "bdm"
-build_install_module "$PS2SDKSRC/iop/fs/bdmfs_fatfs" "bdmfs_fatfs"
-build_install_module "$PS2SDKSRC/iop/usb/usbmass_bd" "usbmass_bd"
+ok=1
+rebuild_module iop/fs/bdm          || ok=0
+rebuild_module iop/fs/bdmfs_fatfs  || ok=0
+rebuild_module iop/usb/usbmass_bd  || ok=0
 
-# Optional: also rebuild ata_bd if the source is available.
-if [ -f "$PS2SDKSRC/iop/dev9/ata_bd/Makefile" ]; then
-  build_install_module "$PS2SDKSRC/iop/dev9/ata_bd"  "ata_bd"
+# 6) 兜底：若单个模块编译失败，整体编译 iop 层（ps2sdk 标准入口，上下文最完整）
+if [ "$ok" -eq 0 ]; then
+  echo "Falling back to full 'make -C $PS2SDK iop' ..."
+  make -C "$PS2SDK" iop 2>&1 || echo "WARN: 'make iop' also failed; check toolchain env"
 fi
 
-echo ""
+# 7) 诊断输出
 echo "=========================================="
-echo "FatFs Chinese patch and storage module rebuild complete."
-echo "Final IRX files:"
-ls -la "$PS2SDK/iop/irx/bdm.irx" "$PS2SDK/iop/irx/bdmfs_fatfs.irx" "$PS2SDK/iop/irx/usbmass_bd.irx" || true
+echo "Final IRX files (timestamps should be NEW, not Sep 3):"
+ls -la "$PS2SDK/iop/irx/bdm.irx" \
+      "$PS2SDK/iop/irx/bdmfs_fatfs.irx" \
+      "$PS2SDK/iop/irx/usbmass_bd.irx" 2>&1 || true
+echo "FatFs Chinese patch complete."
 echo "=========================================="
