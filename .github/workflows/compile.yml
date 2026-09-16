@@ -5,9 +5,6 @@ on:
     inputs:
       make_args:
         description: pass extra make argumments to control features not explicitly handled by CI
-  push:
-  repository_dispatch:
-    types: [run_build]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -75,6 +72,11 @@ jobs:
     - name: Ensure scripts are executable
       run: |
         chmod +x scripts/ci/resolve_make_args.sh
+        chmod +x scripts/ci/patch_fatfs_chinese.sh
+
+    - name: Patch FatFs for Chinese long file names
+      run: |
+        scripts/ci/patch_fatfs_chinese.sh
 
     - name: Compile wLaunchELF
       run: |
