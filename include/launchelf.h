@@ -583,6 +583,7 @@ enum BuiltinLanguage {
 	BUILTIN_LANGUAGE_BRAZILIAN,
 	BUILTIN_LANGUAGE_GERMAN,
 	BUILTIN_LANGUAGE_HUNGARIAN,
+	BUILTIN_LANGUAGE_CHINESE,
 	BUILTIN_LANGUAGE_COUNT
 };
 
@@ -599,6 +600,7 @@ enum {
 extern Language Lang_String[];
 extern Language Lang_Default[];
 extern void *External_Lang_Buffer;
+extern int g_useUTF8;  // 1 = 当前语言为简体中文 (UTF-8)，由 lang.c 维护
 
 int normalizeVirtualKeyboardLayout(int layout);
 const char *getVirtualKeyboardLayoutConfigName(int layout);

@@ -57,10 +57,19 @@ static Language Lang_Hungarian[] = {
 #undef lang
     {NULL}};
 
+static Language Lang_Chinese[] = {
+#define lang(id, name, value) {value},
+#include "../Lang/CHS.LNG"
+#undef lang
+    {NULL}};
+
 Language Lang_String[sizeof(Lang_Default) / sizeof(Lang_Default[0])];
 Language Lang_Extern[sizeof(Lang_Default) / sizeof(Lang_Default[0])];
 
 void *External_Lang_Buffer = NULL;
+
+// 1 = 当前语言为简体中文 (UTF-8)，draw_text.c 据此启用 font_cn 汉字渲染与 GBK 回退解码
+int g_useUTF8 = 0;
 
 static const char *builtin_language_config_names[BUILTIN_LANGUAGE_COUNT] = {
     "english",
@@ -72,6 +81,7 @@ static const char *builtin_language_config_names[BUILTIN_LANGUAGE_COUNT] = {
     "brazilian",
     "german",
     "hungarian",
+    "chinese",
 };
 
 static const char *builtin_language_native_names[BUILTIN_LANGUAGE_COUNT] = {
@@ -84,6 +94,7 @@ static const char *builtin_language_native_names[BUILTIN_LANGUAGE_COUNT] = {
     "Portugues Brasileiro",
     "Deutsch",
     "Magyar",
+    "简体中文",
 };
 
 int normalizeBuiltinLanguage(int language)
@@ -114,6 +125,8 @@ static Language *getBuiltinLanguageTable(int language)
 			return Lang_German;
 		case BUILTIN_LANGUAGE_HUNGARIAN:
 			return Lang_Hungarian;
+		case BUILTIN_LANGUAGE_CHINESE:
+			return Lang_Chinese;
 		case BUILTIN_LANGUAGE_ENGLISH:
 		default:
 			return Lang_Default;
@@ -156,6 +169,9 @@ int getBuiltinLanguageByConfigName(const char *name)
 		return BUILTIN_LANGUAGE_GERMAN;
 	if (!stricmp(name, "8") || !stricmp(name, "hungarian") || !stricmp(name, "hun") || !stricmp(name, "hu") || !stricmp(name, "magyar"))
 		return BUILTIN_LANGUAGE_HUNGARIAN;
+	if (!stricmp(name, "9") || !stricmp(name, "chinese") || !stricmp(name, "chs") || !stricmp(name, "zh") ||
+	    !stricmp(name, "zh-cn") || !stricmp(name, "simplified_chinese") || !stricmp(name, "zhongwen"))
+		return BUILTIN_LANGUAGE_CHINESE;
 	return -1;
 }
 
@@ -436,6 +452,7 @@ static void updateLocalizedMiscPaths(void)
 void Init_Default_Language(void)
 {
 	memcpy(Lang_String, Lang_Default, sizeof(Lang_String));
+	g_useUTF8 = 0;
 }
 //Ends Init_Default_Language
 //---------------------------------------------------------------------------
@@ -444,6 +461,7 @@ void Set_Language(int language)
 	releaseExternalLanguageBuffer();
 	if (setting != NULL)
 		setting->language = normalizeBuiltinLanguage(language);
+	g_useUTF8 = (normalizeBuiltinLanguage(language) == BUILTIN_LANGUAGE_CHINESE) ? 1 : 0;
 	memcpy(Lang_String, getBuiltinLanguageTable(language), sizeof(Lang_String));
 	updateLocalizedMiscPaths();
 }
@@ -465,6 +483,7 @@ void Load_External_Language(void)
 
 	Lang = getBuiltinLanguageTable(setting != NULL ? setting->language : BUILTIN_LANGUAGE_ENGLISH);
 	memcpy(Lang_String, Lang, sizeof(Lang_String));
+	g_useUTF8 = (setting != NULL && normalizeBuiltinLanguage(setting->language) == BUILTIN_LANGUAGE_CHINESE) ? 1 : 0;
 
 	if (setting != NULL && strlen(setting->lang_file) != 0) {  //if language file string set
 
