@@ -726,6 +726,7 @@ void initConfig(void)
 	setting->screen_y = 0;
 	setting->Menu_Frame = DEF_MENU_FRAME;
 	setting->swapKeys = DEF_SWAPKEYS;
+	swapKeys = setting->swapKeys;  //sync bare global used by all pad loops (fixes default O=confirm)
 	setting->HOSTwrite = DEF_HOSTWRITE;
 	setting->app_gameid = DEF_APP_GAMEID;
 	setting->cdrom_disable_gameid = DEF_CDROM_DISABLE_GAMEID;
@@ -765,7 +766,7 @@ int loadConfig(char *mainMsg, char *CNF)
 	loaded_path[0] = '\0';
 
 	strcpy(path, LaunchElfDir);
-	strcat(path, CNF);
+	strcat(cnf_path, CNF);
 	if (!strncmp(path, "cdrom", 5))
 		strcat(path, ";1");
 
@@ -811,8 +812,8 @@ int loadConfig(char *mainMsg, char *CNF)
 	CNF_p = RAM_p;
 
 	//RA NB: in the code below, the 'LK_' variables have been implemented such that
-	//       any _Ex suffix will be accepted, with identical results. This will need
-	//       to be modified when more execution methods are implemented.
+	//       any _Ex suffix will be accepted, with identical results. This will need to
+	//       be modified when more execution methods are implemented.
 
 	CNF_version = 0;                                                       // The CNF version is still unidentified
 	for (var_cnt = 0; get_CNF_string(&CNF_p, &name, &value); var_cnt++) {  // A variable was found, now we dispose of its value.
@@ -957,6 +958,8 @@ int loadConfig(char *mainMsg, char *CNF)
 		setting->LK_Title[i][MAX_ELF_TITLE - 1] = 0;
 	free(RAM_p);
 	snprintf(LoadedConfigPath, sizeof(LoadedConfigPath), "%s", loaded_path[0] ? loaded_path : cnf_path);
+	swapKeys = setting->swapKeys;  //sync bare global used by all pad loops (applies saved config)
+
 	sprintf(mainMsg, "%s (%s)", LNG(Loaded_Config), cnf_path);
 	return 0;
 }
@@ -1455,19 +1458,19 @@ void config(char *mainMsg, char *CNF)
 						strcpy(c, "  Default: ");
 						break;
 					case CONFIG_MAIN_BTN_CIRCLE:
-						strcpy(c, "  \xFF"
+						strcpy(c, "  \xff"
 						          "0     : ");
 						break;
 					case CONFIG_MAIN_BTN_CROSS:
-						strcpy(c, "  \xFF"
+						strcpy(c, "  \xff"
 						          "1     : ");
 						break;
 					case CONFIG_MAIN_BTN_SQUARE:
-						strcpy(c, "  \xFF"
+						strcpy(c, "  \xff"
 						          "2     : ");
 						break;
 					case CONFIG_MAIN_BTN_TRIANGLE:
-						strcpy(c, "  \xFF"
+						strcpy(c, "  \xff"
 						          "3     : ");
 						break;
 					case CONFIG_MAIN_BTN_L1:
@@ -1520,7 +1523,7 @@ void config(char *mainMsg, char *CNF)
 			sprintf(c, "  %s...", LNG(Network_Settings));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
-			sprintf(c, "  Advanced Settings...");
+			sprintf(c, "  %s...", LNG(Advanced_Settings));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 			y += FONT_HEIGHT / 2;
@@ -1543,51 +1546,51 @@ void config(char *mainMsg, char *CNF)
 				//Tooltip section
 				if (s < CONFIG_MAIN_AFT_BTNS) {
 					if (setting->PathPad_Lock) {
-						len = sprintf(c, "\xFF"
+						len = sprintf(c, "\xff"
 						                 "2:%s",
 						              LNG(Edit_Title));
 					} else if (swapKeys) {
-						len = sprintf(c, "\xFF"
-						                 "1:%s \xFF"
-						                 "0:%s \xFF"
+						len = sprintf(c, "\xff"
+						                 "1:%s \xff"
+						                 "0:%s \xff"
 						                 "2:%s",
 						              LNG(Browse), LNG(Clear), LNG(Edit_Title));
 					} else {
-						len = sprintf(c, "\xFF"
-						                 "0:%s \xFF"
-						                 "1:%s \xFF"
+						len = sprintf(c, "\xff"
+						                 "0:%s \xff"
+						                 "1:%s \xff"
 						                 "2:%s",
 						              LNG(Browse), LNG(Clear), LNG(Edit_Title));
 				}
 			} else if ((s == CONFIG_MAIN_SHOW_TITLES) || (s == CONFIG_MAIN_FILENAME)) {
 				if (swapKeys)
-					len = sprintf(c, "\xFF"
+					len = sprintf(c, "\xff"
 					                 "1:%s",
 					              LNG(Change));
 				else
-					len = sprintf(c, "\xFF"
+					len = sprintf(c, "\xff"
 					                 "0:%s",
 					              LNG(Change));
 			} else if (s == CONFIG_MAIN_SAVE) {
 				if (swapKeys)
-					len = sprintf(c, "\xFF"
+					len = sprintf(c, "\xff"
 					                 "1:%s",
 					              LNG(Select));
 				else
-					len = sprintf(c, "\xFF"
+					len = sprintf(c, "\xff"
 					                 "0:%s",
 					              LNG(Select));
 			} else {
 				if (swapKeys)
-					len = sprintf(c, "\xFF"
+					len = sprintf(c, "\xff"
 					                 "1:%s",
 					              LNG(OK));
 				else
-					len = sprintf(c, "\xFF"
+					len = sprintf(c, "\xff"
 					                 "0:%s",
 					              LNG(OK));
 			}
-			sprintf(&c[len], " \xFF"
+			sprintf(&c[len], " \xff"
 			                 "3:%s",
 			        LNG(Return));
 			setScrTmp(localMsg, c);

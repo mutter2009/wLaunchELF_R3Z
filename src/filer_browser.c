@@ -8,6 +8,11 @@
 #include "gui_hdd0_format.h"
 #include "init.h"
 
+// Built-in ELISA100.FNT data (src/font_elisa.c), used as fallback so Japanese
+// MC save titles display without an external font file. External ELISA100.FNT
+// in WLE.ELF's directory will still override this built-in data if present.
+extern const unsigned char font_elisa_builtin[];
+
 #define SOURCE_DEVICE_WAIT_INTERVAL_MS 1000
 #define SOURCE_DEVICE_WAIT_TIMEOUT_MS 6000
 
@@ -28,71 +33,71 @@ static int isGenericUsbRootPath(const char *path)
 
 static const char *getUsbRootDeviceLabel(char unit)
 {
-	static char label[] = "usb0:/";
+	static char label[32];
 
 	if ((unit < '0') || (unit > '9'))
 		return NULL;
 
-	label[3] = unit;
+	sprintf(label, "USB 存储%c", unit);
 	return label;
 }
 
 static const char *getRootDeviceLabel(const char *name)
 {
 	if (!strcmp(name, "mc0:"))
-		return "mc0:/";
+		return "记忆卡0 (mc0)";
 	if (!strcmp(name, "mc1:"))
-		return "mc1:/";
+		return "记忆卡1 (mc1)";
 	if (!strcmp(name, "mass:"))
-		return "usb:/";
+		return "USB 存储";
 	if (!strncmp(name, "mass", 4) && name[4] >= '0' && name[4] <= '9' && name[5] == ':' && name[6] == '\0')
 		return getUsbRootDeviceLabel(name[4]);
 	if (!strcmp(name, "usb:"))
-		return "usb:/";
+		return "USB 存储";
 	if (!strncmp(name, "usb", 3) && name[3] >= '0' && name[3] <= '9' && name[4] == ':' && name[5] == '\0')
 		return getUsbRootDeviceLabel(name[3]);
 #ifdef MMCE
 	if (!strcmp(name, "mmce0:"))
-		return "mmce0:/";
+		return "MMCE 存储卡0";
 	if (!strcmp(name, "mmce1:"))
-		return "mmce1:/";
+		return "MMCE 存储卡1";
 #endif
 #ifdef MX4SIO
 	if (!strcmp(name, "mx4sio:"))
-		return "mx4sio:/";
+		return "MX4SIO 存储卡";
 #endif
 	if (!strcmp(name, "hdd0:"))
-		return "hdd0:/";
+		return "硬盘 (hdd0)";
 	if (!strcmp(name, "hdd1:"))
-		return "hdd1:/";
+		return "硬盘2 (hdd1)";
 #ifdef EXFAT
 	if (!strcmp(name, "ata:"))
-		return "ata0:/";
+		return "ATA 硬盘 (ata0)";
 	if (!strcmp(name, "ata0:"))
-		return "ata0:/";
+		return "ATA 硬盘 (ata0)";
 	if (!strcmp(name, "ata1:"))
-		return "ata1:/";
+		return "ATA 硬盘 (ata1)";
 #endif
 	if (!strcmp(name, "cdfs:"))
-		return "cdfs:/";
+		return "光盘 (cdfs)";
 #ifdef XFROM
 	if (!strcmp(name, "xfrom0:") || !strcmp(name, "xfrom:"))
-		return "xfrom:/";
+		return "XFROM 存储";
 #endif
 #ifdef DVRP
 	if (!strcmp(name, "dvr_hdd0:"))
-		return "dvr:/";
+		return "DVR 硬盘";
 #endif
 #ifdef ETH
 	if (!strcmp(name, "host:"))
-		return "host:/";
+		return "HOST 网络";
 #endif
 #ifdef UDPFS
 	if (!strcmp(name, "udpfs:"))
-		return "udpfs:/";
+		return "UDPFS 网络";
 #endif
 	if (!strcmp(name, LNG(MISC)))
-		return "MISC/";
+		return "其他";
 
 	return NULL;
 }
@@ -397,7 +402,7 @@ static int menu(const char *path, FILEINFO *file)
 	menu_len = strlen(LNG(time_manip)) > menu_len ? strlen(LNG(time_manip)) : menu_len;
 	menu_len = strlen(LNG(title_cfg)) > menu_len ? strlen(LNG(title_cfg)) : menu_len;
 	menu_len = (strlen(LNG(Mount)) + 6) > menu_len ? (strlen(LNG(Mount)) + 6) : menu_len;
-	
+
 
 	int menu_ch_w = menu_len + 1;                                 //Total characters in longest menu string
 	int menu_ch_h = NUM_MENU;                                     //Total number of menu lines
@@ -443,7 +448,7 @@ static int menu(const char *path, FILEINFO *file)
 		enable[TIMEMANIP] = TRUE;
 	} else {
 		enable[TIMEMANIP] = FALSE;
-	} 
+	}
 //#endif //TMANIP
 	if (genCmpFileExt(file->name, "ELF") && isTitleCfgPathEligible(path, menu_disabled))
 		enable[TITLE_CFG] = TRUE;
@@ -809,11 +814,37 @@ static int BrowserModePopup(void)
 				case PAD_CROSS:
 					file_show = 1;
 					event |= 2;  //event |= valid pad command
+					if ((file_show == 2) && (elisaFnt == NULL))
+						elisaFnt = (unsigned char *)font_elisa_builtin;
+					if ((file_show == 2) && (elisaFnt == (unsigned char *)font_elisa_builtin) && (elisa_failed == FALSE)) {
+						int fd, res;
+						elisa_failed = TRUE;  //Default to FAILED. If it succeeds, then this status will be cleared.
+
+						res = genFixPath("uLE:/ELISA100.FNT", tmp);
+						if (!strncmp(tmp, "cdrom", 5))
+							strcat(tmp, ";1");
+						if (res >= 0) {
+							fd = genOpen(tmp, FIO_O_RDONLY);
+							if (fd >= 0) {
+								test = genLseek(fd, 0, SEEK_END);
+								if (test == 55016) {
+									elisaFnt = (unsigned char *)memalign(64, test);
+									genLseek(fd, 0, SEEK_SET);
+									genRead(fd, elisaFnt, test);
+
+									elisa_failed = FALSE;
+								}
+								genClose(fd);
+							}
+						}
+					}
 					break;
 				case PAD_SQUARE:
 					file_show = 2;
 					event |= 2;  //event |= valid pad command
-					if ((file_show == 2) && (elisaFnt == NULL) && (elisa_failed == FALSE)) {
+					if ((file_show == 2) && (elisaFnt == NULL))
+						elisaFnt = (unsigned char *)font_elisa_builtin;
+					if ((file_show == 2) && (elisaFnt == (unsigned char *)font_elisa_builtin) && (elisa_failed == FALSE)) {
 						int fd, res;
 						elisa_failed = TRUE;  //Default to FAILED. If it succeeds, then this status will be cleared.
 
@@ -936,6 +967,43 @@ static void submenu_func_GetSize(char *mess, char *path, FILEINFO *files);
 static void submenu_func_Paste(char *mess, char *path);
 static void submenu_func_psuPaste(char *mess, char *path);
 
+// Helpers for filename scrolling in file browser (handles SJIS/ASCII mixed titles)
+static int sjis_char_count_in_width(const unsigned char *s, int max_width)
+{
+	int w = 0, chars = 0;
+	while (*s) {
+		int char_w;
+		if (*s & 0x80) {
+			if (!s[1]) break;
+			char_w = 16;  // wide Japanese glyph (two ASCII cells)
+			s += 2;
+		} else {
+			char_w = 8;   // ASCII glyph
+			s += 1;
+		}
+		if (w + char_w > max_width) break;
+		w += char_w;
+		chars++;
+	}
+	return chars;
+}
+
+static int sjis_skip_chars(const unsigned char *s, int char_count)
+{
+	const unsigned char *start = s;
+	int chars = 0;
+	while (*s && chars < char_count) {
+		if (*s & 0x80) {
+			if (!s[1]) break;
+			s += 2;
+		} else {
+			s += 1;
+		}
+		chars++;
+	}
+	return s - start;
+}
+
 static int isRootSpacerEntry(const char *path, const FILEINFO *file)
 {
 	return path[0] == '\0' && file->name[0] == '\0';
@@ -968,7 +1036,9 @@ int getFilePath(char *out, int cnfmode)
 	char path[MAX_PATH], cursorEntry[MAX_PATH],
 	    msg0[MAX_PATH], msg1[MAX_PATH],
 	    tmp[MAX_PATH], tmp1[MAX_PATH], tmp2[MAX_PATH], ext[8], *p;
+	char display_name[MAX_PATH];
 	const unsigned char *mcTitle;
+	const unsigned char *name_src;
 	u64 color;
 	FILEINFO files[MAX_ENTRY];
 	int top = 0, rows;
@@ -1619,10 +1689,10 @@ int getFilePath(char *out, int cnfmode)
 
 		if (event || post_event) {  //NB: We need to update two frame buffers per event
 
-			//Display section
-			clrScr(setting->color[COLOR_BACKGR]);
+		//Display section
+		clrScr(setting->color[COLOR_BACKGR]);
 
-			x = Menu_start_x;
+		x = Menu_start_x;
 			y = Menu_start_y;
 			font_height = FONT_HEIGHT;
 			if ((file_show == 2) && (elisaFnt != NULL)) {
@@ -1668,23 +1738,47 @@ int getFilePath(char *out, int cnfmode)
 						name_limit = 71 * 8;
 					}
 				}
-				if (name_limit) {                   //Do we need to check name length ?
-					int name_end = name_limit / 7;  //Max string length for acceptable spacing
-
-					if (files[top + i].stats.AttrFile & sceMcFileAttrSubdir)
-						name_end -= 1;             //For folders, reserve one character for final '/'
-					if (strlen(tmp) > name_end) {  //Is name too long for clean display ?
-						tmp[name_end - 1] = '~';   //indicate filename abbreviation
-						tmp[name_end] = 0;         //abbreviate name length to make room for details
-					}
-				}
-
 				if (files[top + i].stats.AttrFile & sceMcFileAttrSubdir && path[0] != 0)
 					strcat(tmp, "/");
-				if (mcTitle != NULL)
-					printXY_sjis(mcTitle, x + 4, y, color, TRUE);
-				else
-					printXY(tmp, x + 4, y, color, TRUE, name_limit);
+
+			// Prepare display name; clip long names so they never overlap the details column
+			if (mcTitle != NULL) {
+				name_src = mcTitle;
+			} else {
+				name_src = (const unsigned char *)tmp;
+			}
+
+			if (name_limit > 0) {
+				int char_w = (mcTitle != NULL) ? 12 : 8;   // Japanese glyph 12px wide, ASCII 8px
+				int max_chars = name_limit / char_w;
+				if (max_chars < 3) max_chars = 3;
+				// Count visible characters (Shift-JIS aware: lead byte >= 0x80 = 2 bytes)
+				int n = 0, p = 0;
+				while (name_src[p]) {
+					p += ((unsigned char)name_src[p] >= 0x80) ? 2 : 1;
+					if (++n >= max_chars) break;
+				}
+				if (name_src[p] != 0) {
+					// Too long: keep (max_chars-1) chars and append '~'
+					int used = 0, c = 0;
+					while (c < max_chars - 1 && name_src[used]) {
+						used += ((unsigned char)name_src[used] >= 0x80) ? 2 : 1;
+						c++;
+					}
+					memcpy(display_name, name_src, used);
+					display_name[used] = '~';
+					display_name[used + 1] = '\0';
+				} else {
+					strcpy(display_name, (const char *)name_src);
+				}
+			} else {
+				strcpy(display_name, (const char *)name_src);
+			}
+
+			if (mcTitle != NULL)
+				printXY_sjis((const unsigned char *)display_name, x + 4, y, color, TRUE);
+			else
+				printXY(display_name, x + 4, y, color, TRUE, name_limit);
 				if (file_show > 0) {
 					//					unsigned int size = files[top+i].stats.fileSizeByte;
 					u64 size = ((u64)files[top + i].stats.Reserve2 << 32) | files[top + i].stats.FileSizeByte;
@@ -1735,11 +1829,11 @@ int getFilePath(char *out, int cnfmode)
 						if (genCmpFileExt(files[top + i].name, "ELF"))
 							iconcolr = COLOR_GRAPH2;
 						else if (
-									genCmpFileExt(files[top + i].name, "TXT") || 
-									genCmpFileExt(files[top + i].name, "CFG") || 
-									genCmpFileExt(files[top + i].name, "CNF") || 
-									genCmpFileExt(files[top + i].name, "INI") || 
-									genCmpFileExt(files[top + i].name, "CHT") || 
+									genCmpFileExt(files[top + i].name, "TXT") ||
+									genCmpFileExt(files[top + i].name, "CFG") ||
+									genCmpFileExt(files[top + i].name, "CNF") ||
+									genCmpFileExt(files[top + i].name, "INI") ||
+									genCmpFileExt(files[top + i].name, "CHT") ||
 									genCmpFileExt(files[top + i].name, "PBT") ||
 									genCmpFileExt(files[top + i].name, "JS") ||
 									genCmpFileExt(files[top + i].name, "LUA") ||

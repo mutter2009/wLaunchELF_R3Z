@@ -55,7 +55,7 @@ static void drawMenuTitleLine(void)
 
 	x = SCREEN_MARGIN;
 	y = Menu_title_y;
-	sprintf(app_title, "\xff\x34 wLaunchELF %s \xff\x34", ULE_VERSION);
+	sprintf(app_title, "\xff\x34 wLaunchELF %s A9VG汉化版 \xff\x34", ULE_VERSION);
 
 	drawSprite(setting->color[COLOR_BACKGR], 0, Menu_title_y - 1, SCREEN_WIDTH, Menu_message_y - 1);
 	printXY(app_title, x, y, setting->color[COLOR_FRAME], TRUE, 0);
@@ -250,8 +250,8 @@ int	WriteFont_C(char *path_arg)
 		else //(i > 0x0FF)
 			sprintf(char_info, "//char 0x%03X == special for uLE", i);
 		sprintf(text+strlen(text),
-			"	0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, %s\r\n"
-			"	0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X"
+			" 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, %s\r\n"
+			" 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X"
 			, p[0],p[1], p[2],p[3], p[4],p[5], p[6],p[7], char_info
 			, p[8],p[9], p[10],p[11], p[12],p[13], p[14],p[15]
 		);

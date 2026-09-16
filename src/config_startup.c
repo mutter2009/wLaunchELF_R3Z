@@ -276,20 +276,20 @@ void Config_Startup(void)
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValue(c, sizeof(c), "ESR elf", (strlen(setting->LK_Path[SETTING_LK_ESR]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_ESR]);
+			configFormatLabelValue(c, sizeof(c), LNG(ESR_ELF), (strlen(setting->LK_Path[SETTING_LK_ESR]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_ESR]);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValue(c, sizeof(c), "OSDSYS kelf", (strlen(setting->LK_Path[SETTING_LK_OSDSYS]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_OSDSYS]);
+			configFormatLabelValue(c, sizeof(c), LNG(OSDSYS_KELF), (strlen(setting->LK_Path[SETTING_LK_OSDSYS]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_OSDSYS]);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValue(c, sizeof(c), "POPSTARTER ELF", (strlen(setting->popstarter_file) == 0) ? LNG(DEFAULT) : setting->popstarter_file);
+			configFormatLabelValue(c, sizeof(c), LNG(POPSTARTER_ELF), (strlen(setting->popstarter_file) == 0) ? LNG(DEFAULT) : setting->popstarter_file);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 			y += FONT_HEIGHT / 2;
 
-			configFormatLabelValue(c, sizeof(c), "Hide HDD", getHideHddModeDisplayName(setting->Hide_Hdd));
+			configFormatLabelValue(c, sizeof(c), LNG(Hide_HDD), getHideHddModeDisplayName(setting->Hide_Hdd));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
