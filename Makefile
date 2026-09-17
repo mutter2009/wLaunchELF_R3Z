@@ -50,7 +50,7 @@ EE_MATH_LIB := -lmf
 endif
 
 EE_LIBS = -lgskit -ldmakit -lmc -lhdd -lkbd $(EE_MATH_LIB) \
-			-lcdvd -lc -lfileXio -lpatches -lpoweroff -ldebug
+			-lcdvd -lc -lfileXio -u smod_get_mod_by_name -u smem_buf -lpatches -lpoweroff -ldebug
 EE_CFLAGS := -mgpopt -G10240 -G0 -DNEWLIB_PORT_AWARE -D_EE
 
 ifneq ($(DEBUG), 0)
