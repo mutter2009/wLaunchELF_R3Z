@@ -5,6 +5,10 @@ MMCE ?= 1
 DS34 ?= 0
 TMANIP ?= 1
 ETH ?= 0
+NETFS ?= 0
+ifeq ($(NETFS),1)
+ETH = 1
+endif
 UDPFS ?= 1
 EXFAT ?= 1
 DVRP ?= 1
@@ -28,13 +32,13 @@ else
   EE_BIN = UNC-BOOT.ELF
   EE_BIN_PKD = BOOT.ELF
 endif
-EE_OBJS = main.o main_actions.o main_boot.o main_modules.o main_menu.o main_title.o main_info_screens.o main_console_info.o main_gameid.o main_gameid_table.o main_history.o init.o main_startup.o main_fileops.o main_exploit_installer.o config.o config_screen.o config_startup.o config_network.o config_advanced.o gui.o gui_colors.o virtual_keyboard.o elf.o draw.o draw_gs.o draw_text.o loader_elf.o filer.o filer_device.o filer_mount.o filer_fileops.o filer_actions.o filer_browser.o filer_copy.o \
+EE_OBJS = main.o main_actions.o main_boot.o main_modules.o main_menu.o main_title.o main_info_screens.o main_console_info.o main_gameid.o main_gameid_table.o neutrino_gameid.o main_history.o init.o main_startup.o main_fileops.o main_exploit_installer.o kelf_signer.o config.o config_screen.o config_startup.o config_network.o config_advanced.o config_smb.o gui.o gui_colors.o gui_neutrino.o virtual_keyboard.o elf.o draw.o draw_gs.o draw_text.o loader_elf.o filer.o filer_device.o filer_mount.o filer_fileops.o filer_actions.o filer_browser.o filer_copy.o \
 	gui_sort.o gui_texteditor.o gui_hdd0_format.o psu_functions.o \
 	poweroff_irx.o iomanx_irx.o filexio_irx.o ps2dev9_irx.o dev9_poweroff_irx.o \
 	ps2hdd_irx.o ps2fs_irx.o usbd_irx.o mcman_irx.o mcserv_irx.o \
 	cdvd_irx.o xparam_irx.o vmcman_irx.o ps2kbd_irx.o \
-	hdd.o hdd_header_injector.o hdl_rpc.o hdl_info_irx.o editor.o editor_menu.o editor_input.o editor_rules.o editor_file.o timer.o icon.o lang.o popstarter.o popstarter_path.o popstarter_vcd.o popstarter_gameid.o popstarter_elf.o \
-font_uLE.o font_cn.o font_elisa.o makeicon.o chkesr.o allowdvdv_irx.o \
+	hdd.o hdd_header_injector.o hdl_rpc.o hdl_info_irx.o editor.o editor_menu.o editor_input.o editor_rules.o editor_file.o timer.o icon.o lang.o popstarter.o popstarter_path.o popstarter_vcd.o popstarter_gameid.o popstarter_elf.o ember.o \
+	font_uLE.o font_cn.o makeicon.o chkesr.o allowdvdv_irx.o \
 	exploit_system_xlf_header.o exploit_xsystem_xlf_header.o exploit_dtl_system_xlf_header.o exploit_xlf_body.o \
 	exploit_osdsys_kernel.o exploit_osd110_kernel.o \
 	exploit_jpn_sys.o exploit_usa_sys.o exploit_eur_sys.o exploit_chn_sys.o \
@@ -49,8 +53,9 @@ ifneq ($(wildcard $(PS2SDK)/ee/lib/libmf.a),)
 EE_MATH_LIB := -lmf
 endif
 
-EE_LIBS = -lgskit -ldmakit -lmc -lhdd -lkbd $(EE_MATH_LIB) \
-			-lcdvd -lc -lfileXio -u smod_get_mod_by_name -u smem_buf -lpatches -lpoweroff -ldebug
+# Newer PS2SDK libpatches can have backward intra-archive references.
+EE_LIBS = -Wl,--start-group -lgskit -ldmakit -lmc -lhdd -lkbd $(EE_MATH_LIB) \
+			-lcdvd -lc -lfileXio -lpatches -lpoweroff -ldebug
 EE_CFLAGS := -mgpopt -G10240 -G0 -DNEWLIB_PORT_AWARE -D_EE
 
 ifneq ($(DEBUG), 0)
@@ -171,6 +176,12 @@ endif
 ifeq ($(ETH),1)
     EE_OBJS += ps2smap_irx.o ps2ftpd_irx.o ps2host_irx.o ps2netfs_irx.o ps2ip_irx.o
     EE_CFLAGS += -DETH
+ifeq ($(NETFS),1)
+    EE_OBJS += smb2.o nfs.o netman_irx.o
+    EE_CFLAGS += -DNETFS
+    EE_LIBS += -lsmb2 -lnfs -lps2ip -lnetman
+    HAS_ETH = -ETH
+endif
 ifeq ($(UDPFS),1)
     HAS_ETH = -ETH
 endif
@@ -225,6 +236,8 @@ ifeq ($(IOPTRAP),1)
     EE_OBJS += ioptrap_irx.o
     EE_CFLAGS += -DIOPTRAP
 endif
+
+EE_LIBS += -Wl,--end-group
 
 
 EE_OBJS_DIR = obj/
@@ -296,11 +309,13 @@ info:
 	$(info   DS34		include PS3/PS4 controller support)
 	$(info   MX4SIO		support for SDCard connected to memory card slot 2)
 	$(info   MMCE		support for direct SDCard access on SD2PSX or memcardpro2)
-	$(info ----------)\n	$(info   IOPTRAP		load exception handler module to IOP)
+	$(info ----------)
+	$(info   IOPTRAP		load exception handler module to IOP)
 	$(info   UDPTTY		transfer stdout to UDP broadcast)
-	$(info   PPC_UART		transfer stdout to DECKARD UART)
-	$(info   SIO_DEBUG 		transfer EE stdout to EE UART)
-	$(info ----------)\n	$(info build shortcuts:)
+	$(info   PPC_UART	transfer stdout to DECKARD UART)
+	$(info   SIO_DEBUG 	transfer EE stdout to EE UART)
+	$(info ----------)
+	$(info build shortcuts:)
 	$(info   all-ds34-off		builds without DS34 in isolated obj dirs)
 	$(info   all-ds34-on		builds with DS34 in isolated obj dirs)
 	$(info   all-ds34-variants	builds both DS34 variants)
