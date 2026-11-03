@@ -5,6 +5,9 @@ on:
     inputs:
       make_args:
         description: pass extra make argumments to control features not explicitly handled by CI
+  push:
+  repository_dispatch:
+    types: [run_build]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -22,10 +25,17 @@ jobs:
             psx_profile: "psx"
             pad_profile: "no-ds34"
             storage_profile: "all"
+            netfs: "0"
           - variant_name: "R3Z-DS34"
             psx_profile: "psx"
             pad_profile: "ds34"
             storage_profile: "all"
+            netfs: "0"
+          - variant_name: "R3Z-NETFS"
+            psx_profile: "psx"
+            pad_profile: "no-ds34"
+            storage_profile: "all"
+            netfs: "1"
     runs-on: ubuntu-latest
     # Track the current PS2 homebrew toolchain so CI catches PS2SDK compatibility changes.
     container: ghcr.io/ps2homebrew/ps2homebrew:main
@@ -72,11 +82,6 @@ jobs:
     - name: Ensure scripts are executable
       run: |
         chmod +x scripts/ci/resolve_make_args.sh
-        chmod +x scripts/ci/patch_fatfs_chinese.sh
-
-    - name: Patch FatFs for Chinese long file names
-      run: |
-        scripts/ci/patch_fatfs_chinese.sh
 
     - name: Compile wLaunchELF
       run: |
@@ -84,7 +89,8 @@ jobs:
           "${{ matrix.psx_profile }}" \
           "${{ matrix.pad_profile }}" \
           "${{ matrix.storage_profile }}" \
-          0 0)"
+          0 0 \
+          "${{ matrix.netfs }}")"
         echo "Resolved make flags: $FLAGS"
         make rebuild ${{ github.event.inputs.make_args }} $FLAGS
 
