@@ -68,8 +68,7 @@ Language Lang_Extern[sizeof(Lang_Default) / sizeof(Lang_Default[0])];
 
 void *External_Lang_Buffer = NULL;
 
-// 1 = 当前语言为简体中文 (UTF-8)，draw_text.c 据此启用 font_cn 汉字渲染与 GBK 回退解码
-int g_useUTF8 = 0;
+int g_useUTF8 = 0;  // 1 = 当前语言为简体中文 (UTF-8)，由 Set_Language / Load_External_Language 维护
 
 static const char *builtin_language_config_names[BUILTIN_LANGUAGE_COUNT] = {
     "english",
@@ -94,7 +93,7 @@ static const char *builtin_language_native_names[BUILTIN_LANGUAGE_COUNT] = {
     "Portugues Brasileiro",
     "Deutsch",
     "Magyar",
-    "简体中文",
+    "中文",
 };
 
 int normalizeBuiltinLanguage(int language)
@@ -169,8 +168,7 @@ int getBuiltinLanguageByConfigName(const char *name)
 		return BUILTIN_LANGUAGE_GERMAN;
 	if (!stricmp(name, "8") || !stricmp(name, "hungarian") || !stricmp(name, "hun") || !stricmp(name, "hu") || !stricmp(name, "magyar"))
 		return BUILTIN_LANGUAGE_HUNGARIAN;
-	if (!stricmp(name, "9") || !stricmp(name, "chinese") || !stricmp(name, "chs") || !stricmp(name, "zh") ||
-	    !stricmp(name, "zh-cn") || !stricmp(name, "simplified_chinese") || !stricmp(name, "zhongwen"))
+	if (!stricmp(name, "9") || !stricmp(name, "chinese") || !stricmp(name, "chs") || !stricmp(name, "zh") || !stricmp(name, "cn"))
 		return BUILTIN_LANGUAGE_CHINESE;
 	return -1;
 }
@@ -452,7 +450,6 @@ static void updateLocalizedMiscPaths(void)
 void Init_Default_Language(void)
 {
 	memcpy(Lang_String, Lang_Default, sizeof(Lang_String));
-	g_useUTF8 = 0;
 }
 //Ends Init_Default_Language
 //---------------------------------------------------------------------------

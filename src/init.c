@@ -16,6 +16,10 @@ IMPORT_BIN2C(ps2netfs_irx);
 IMPORT_BIN2C(ps2ftpd_irx);
 #endif
 
+#ifdef NETFS
+IMPORT_BIN2C(netman_irx);
+#endif
+
 #ifdef UDPFS
 IMPORT_BIN2C(udpfs_smap_irx);
 IMPORT_BIN2C(udpfs_ministack_irx);
@@ -98,6 +102,11 @@ static u8 have_mc_rpc_ready = 0;
 static unsigned int iop_reset_generation = 0;
 
 #define USB_MASS_BDMFS_SETTLE_MS 1000
+#define OHCI_REG_BASE 0xbf801600
+#define OHCI_HC_CONTROL (OHCI_REG_BASE + 0x04)
+#define OHCI_HC_COMMAND_STATUS (OHCI_REG_BASE + 0x08)
+#define OHCI_HC_INTERRUPT_DISABLE (OHCI_REG_BASE + 0x14)
+#define OHCI_COM_HCR (1 << 0)
 
 //State of Uncheckable Modules (invalid header)
 static u8 have_cdvd = 0;
@@ -129,6 +138,12 @@ static u8 have_ps2hdd = 0;
 static u8 have_ps2fs = 0;
 static u8 have_vmcman = 0;
 static int vmcman_last_error = 0;
+#ifdef NETFS
+#include <smb2.h>
+#include <nfs.h>
+static u8 have_netman = 0;
+#endif
+
 #ifdef EXFAT
 static u8 have_bdm = 0;
 static u8 have_bdmfs = 0;
@@ -223,6 +238,7 @@ static void load_ps2ip(void);
 static int load_ps2hdd_stack(int with_ata_bd);
 static void showLoadingModulesMsg(const char *device_name);
 static void showRebootingIopMsg(void);
+static void resetUsbHostControllerBeforeIopReset(void);
 #ifdef ETH
 static void load_ps2ftpd(void);
 static void load_ps2netfs(void);
@@ -248,6 +264,7 @@ static void resetUsbMassScanState(void);
 static void resetUsbMassRuntimeState(void);
 static void resetDriverStackLoadTracking(void);
 static void resetRuntimeDeviceState(int show_status);
+static int loadDeviceStackForPath(const char *path);
 static void switchStorageDriverStack(int target_mode);
 static void switchBlockStorageStack(int target_mode);
 #if defined(ETH) && defined(UDPFS)
@@ -259,7 +276,7 @@ static int loadAtaBlockDriver(void);
 static void pauseAfterAtaBlockDriverLoad(void);
 #endif
 #ifdef DVRP
-static int load_ps2atad_stack(void);
+static int load_ps2atad_stack(void) __attribute__((unused));
 static void switchPsxHddDriverStack(int use_dvr_stack);
 #endif
 #ifdef DS34
@@ -318,6 +335,34 @@ static void showRebootingIopMsg(void)
 {
 	if (!is_early_init)
 		drawMsg(LNG(Rebooting_IOP));
+}
+
+static void resetUsbHostControllerBeforeIopReset(void)
+{
+	volatile u32 *hc_control;
+	volatile u32 *hc_command_status;
+	volatile u32 *hc_interrupt_disable;
+	int i;
+
+	hc_control = (volatile u32 *)OHCI_HC_CONTROL;
+	hc_command_status = (volatile u32 *)OHCI_HC_COMMAND_STATUS;
+	hc_interrupt_disable = (volatile u32 *)OHCI_HC_INTERRUPT_DISABLE;
+
+	ee_kmode_enter();
+	*hc_interrupt_disable = ~0;
+	*hc_control &= ~0x3Cu;
+
+	i = 0x500;
+	while (i--)
+		asm("nop\nnop\nnop\nnop");
+
+	*hc_command_status = OHCI_COM_HCR;
+	*hc_control = 0;
+	for (i = 0; i < 1000; i++) {
+		if (!(*hc_command_status & OHCI_COM_HCR))
+			break;
+	}
+	ee_kmode_exit();
 }
 
 static void load_ps2dev9(void)
@@ -413,6 +458,17 @@ static void load_ps2ip(void)
 		return;
 	}
 
+#ifdef NETFS
+	/* NETMAN framework must be up before SMAP/PS2IP register with it. */
+	if (!have_netman) {
+		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
+		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
+		have_netman = (ID >= 0 && ret >= 0);
+		if (!have_netman)
+			return;
+	}
+#endif
+
 	if (!have_ps2ip) {
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
@@ -430,6 +486,23 @@ static void load_ps2ip(void)
 #endif
 //------------------------------
 //endfunc load_ps2ip
+//---------------------------------------------------------------------------
+#ifdef NETFS
+int init_netfs(void)
+{
+	/* Bring up DEV9 + NETMAN + SMAP + PS2IP on the EE. init_smb2() performs
+	 * the idempotent NetManInit()/ps2ipInit() and parses SMB.CNF; init_nfs()
+	 * parses NFS.CNF. Both tolerate missing config files. */
+	load_ps2ip();
+	if (!ps2dev9_loaded) {
+		DPRINTF(" [NETFS]: network stack unavailable, aborting\n");
+		return -1;
+	}
+	init_smb2(ip, netmask, gw);
+	init_nfs(ip, netmask, gw);
+	return 0;
+}
+#endif
 //---------------------------------------------------------------------------
 static int load_ps2hdd_stack(int with_ata_bd)
 {
@@ -497,7 +570,7 @@ static int load_ps2hdd_stack(int with_ata_bd)
 //endfunc load_ps2hdd_stack
 //---------------------------------------------------------------------------
 #ifdef DVRP
-static int load_ps2atad_stack(void)
+static int __attribute__((unused)) load_ps2atad_stack(void)
 {
 	int ret, ID __attribute__((unused));
 	static char hddarg[] = "-o"
@@ -594,6 +667,7 @@ int prepareExploitSignerIop(void)
 	showRebootingIopMsg();
 
 	SifInitRpc(0);
+	resetUsbHostControllerBeforeIopReset();
 	ret = SifIopRebootBuffer(exploit_ioprp_img, size_exploit_ioprp_img);
 	if (ret <= 0) {
 		SifInitRpc(0);
@@ -1427,6 +1501,94 @@ void rebootIopAndReloadCoreStackSilent(void)
 	resetRuntimeDeviceState(FALSE);
 }
 
+static int loadDeviceStackForPath(const char *path)
+{
+	if (path == NULL || path[0] == '\0')
+		return 0;
+
+	if (!strncmp(path, "mc", 2))
+		return 1;
+	if (!strncmp(path, "vmc", 3))
+		return load_vmcman();
+	if (!strncmp(path, "cdfs", 4)) {
+		loadCdModules();
+		return 1;
+	}
+#ifdef XFROM
+	if (!strncmp(path, "xfrom", 5))
+		return loadFlashModules();
+#else
+	if (!strncmp(path, "xfrom", 5))
+		return 0;
+#endif
+#ifdef DVRP
+	if (!strncmp(path, "dvr_hdd0:", 9))
+		return loadDVRPHddModules();
+#else
+	if (!strncmp(path, "dvr_hdd0:", 9))
+		return 0;
+#endif
+	if ((!strncmp(path, "hdd", 3) && path[3] >= '0' && path[3] <= '9' && path[4] == ':') ||
+	    (!strncmp(path, "pfs", 3) && path[3] >= '0' && path[3] <= '9' && path[4] == ':'))
+		return loadHddModules();
+	if (!strncmp(path, "mass", 4) || !strncmp(path, "usb", 3)) {
+		loadUsbModules();
+		return (USB_mass_loaded != 0);
+	}
+#ifdef MMCE
+	if (!strncmp(path, "mmce", 4))
+		return loadMmceModules();
+#else
+	if (!strncmp(path, "mmce", 4))
+		return 0;
+#endif
+#ifdef MX4SIO
+	if (!strncmp(path, "mx4sio", 6))
+		return loadMx4sioModules();
+#else
+	if (!strncmp(path, "mx4sio", 6))
+		return 0;
+#endif
+#ifdef EXFAT
+	if (!strncmp(path, "ata", 3))
+		return loadAtaModules();
+#else
+	if (!strncmp(path, "ata", 3))
+		return 0;
+#endif
+#ifdef ETH
+	if (!strncmp(path, "host:", 5)) {
+		initHOST();
+		return 1;
+	}
+#else
+	if (!strncmp(path, "host:", 5))
+		return 0;
+#endif
+#ifdef UDPFS
+	if (!strncmp(path, "udpfs:", 6))
+		return load_udpfs();
+#else
+	if (!strncmp(path, "udpfs:", 6))
+		return 0;
+#endif
+
+	return 1;
+}
+
+int rebootIopAndLoadDeviceStackForPath(const char *path)
+{
+#ifdef DS34
+	stopDs34Input();
+#endif
+	closeKeyboardIfOpened();
+	showRebootingIopMsg();
+	unmountAll();
+	Reset();
+	setupPad();
+	return loadDeviceStackForPath(path);
+}
+
 void ensureMemoryCardPortAccessible(int port)
 {
 #ifdef MX4SIO
@@ -1929,6 +2091,7 @@ static void clearIopModuleState(void)
 void Reset()
 {
 #ifndef NO_IOP_RESET
+	resetUsbHostControllerBeforeIopReset();
 	SifInitRpc(0);
 	while (!SifIopReset("", 0)) {
 	};

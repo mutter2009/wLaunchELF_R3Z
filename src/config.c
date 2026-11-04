@@ -531,6 +531,9 @@ void saveConfigToPath(char *mainMsg, char *CNF, const char *target_path)
 	        "REBOOT_IOP_ELFLOAD = %d\r\n"
 	        "VirtualKeyboardLayout = %s\r\n"
 	        "Hide_Hdd = %d\r\n"
+	        "Disable_EMBER = %d\r\n"
+	        "Disable_POPSTARTER = %d\r\n"
+	        "Disable_NEUTRINO = %d\r\n"
 	        "Hide_MCMMCE = %d\r\n"
 	        "USBKBD_USED = %d\r\n"
 	        "USBKBD_FILE = %s\r\n"
@@ -542,6 +545,7 @@ void saveConfigToPath(char *mainMsg, char *CNF, const char *target_path)
 	        "LANG_FILE = %s\r\n"
 	        "FONT_FILE = %s\r\n"
 	        "POPSTARTER_ELF = %s\r\n"
+	        "NEUTRINO_ELF = %s\r\n"
 	        "PSU_HugeNames = %d\r\n"
 	        "PSU_DateNames = %d\r\n"
 	        "PSU_NoOverwrite = %d\r\n"
@@ -557,6 +561,9 @@ void saveConfigToPath(char *mainMsg, char *CNF, const char *target_path)
 	        setting->reboot_iop_elf_load,
 	        getVirtualKeyboardLayoutConfigName(setting->virtual_keyboard_layout),
 	        setting->Hide_Hdd,
+	        setting->disable_ember,
+	        setting->disable_popstarter,
+	        setting->disable_neutrino,
 	        setting->Hide_MCMMCE,
 	        setting->usbkbd_used,      //USBKBD_USED
 	        setting->usbkbd_file,      //USBKBD_FILE
@@ -568,6 +575,7 @@ void saveConfigToPath(char *mainMsg, char *CNF, const char *target_path)
 	        setting->lang_file,        //LANG_FILE
 	        setting->font_file,        //FONT_FILE
 	        setting->popstarter_file,  //POPSTARTER_ELF
+	        setting->neutrino_file,    //NEUTRINO_ELF
 	        setting->PSU_HugeNames,    //PSU_HugeNames
 	        setting->PSU_DateNames,    //PSU_DateNames
 	        setting->PSU_NoOverwrite,  //PSU_NoOverwrite
@@ -711,6 +719,7 @@ void initConfig(void)
 	setting->CNF_Path[0] = '\0';
 	setting->lang_file[0] = '\0';
 	setting->font_file[0] = '\0';
+  setting->neutrino_file[0] = '\0';
 	setting->popstarter_file[0] = '\0';
 	setting->timeout = DEF_TIMEOUT;
 	setting->Hide_Paths = DEF_HIDE_PATHS;
@@ -726,7 +735,6 @@ void initConfig(void)
 	setting->screen_y = 0;
 	setting->Menu_Frame = DEF_MENU_FRAME;
 	setting->swapKeys = DEF_SWAPKEYS;
-	swapKeys = setting->swapKeys;  //sync bare global used by all pad loops (fixes default O=confirm)
 	setting->HOSTwrite = DEF_HOSTWRITE;
 	setting->app_gameid = DEF_APP_GAMEID;
 	setting->cdrom_disable_gameid = DEF_CDROM_DISABLE_GAMEID;
@@ -738,6 +746,9 @@ void initConfig(void)
 	setting->reboot_iop_elf_load = DEF_STARTUP_RESET_IOP_ELFLOAD;
 	setting->virtual_keyboard_layout = DEF_VIRTUAL_KEYBOARD_LAYOUT;
 	setting->Hide_Hdd = DEF_HIDE_HDD;
+	setting->disable_ember = DEF_DISABLE_EMBER;
+	setting->disable_popstarter = DEF_DISABLE_POPSTARTER;
+	setting->disable_neutrino = DEF_DISABLE_NEUTRINO;
 	setting->Hide_MCMMCE = DEF_HIDE_MCMMCE;
 	setting->Show_Titles = DEF_SHOW_TITLES;
 	setting->PathPad_Lock = DEF_PATHPAD_LOCK;
@@ -766,7 +777,7 @@ int loadConfig(char *mainMsg, char *CNF)
 	loaded_path[0] = '\0';
 
 	strcpy(path, LaunchElfDir);
-	strcat(cnf_path, CNF);
+	strcat(path, CNF);
 	if (!strncmp(path, "cdrom", 5))
 		strcat(path, ";1");
 
@@ -812,8 +823,8 @@ int loadConfig(char *mainMsg, char *CNF)
 	CNF_p = RAM_p;
 
 	//RA NB: in the code below, the 'LK_' variables have been implemented such that
-	//       any _Ex suffix will be accepted, with identical results. This will need to
-	//       be modified when more execution methods are implemented.
+	//       any _Ex suffix will be accepted, with identical results. This will need
+	//       to be modified when more execution methods are implemented.
 
 	CNF_version = 0;                                                       // The CNF version is still unidentified
 	for (var_cnt = 0; get_CNF_string(&CNF_p, &name, &value); var_cnt++) {  // A variable was found, now we dispose of its value.
@@ -901,6 +912,12 @@ int loadConfig(char *mainMsg, char *CNF)
 		} else if (!strcmp(name, "Hide_Hdd")) {
 			int hide_hdd = atoi(value);
 			setting->Hide_Hdd = (hide_hdd >= 0 && hide_hdd < HIDE_HDD_COUNT) ? hide_hdd : DEF_HIDE_HDD;
+		} else if (!strcmp(name, "Disable_EMBER")) {
+			setting->disable_ember = (atoi(value) != 0);
+		} else if (!strcmp(name, "Disable_POPSTARTER")) {
+			setting->disable_popstarter = (atoi(value) != 0);
+		} else if (!strcmp(name, "Disable_NEUTRINO")) {
+			setting->disable_neutrino = (atoi(value) != 0);
 		} else if (!strcmp(name, "Hide_MCMMCE")) {
 			setting->Hide_MCMMCE = (atoi(value) != 0);
 		} else if (!strcmp(name, "USBKBD_FILE"))
@@ -922,6 +939,8 @@ int loadConfig(char *mainMsg, char *CNF)
 			strcpy(setting->font_file, value);
 		else if (!strcmp(name, "POPSTARTER_ELF"))
 			strcpy(setting->popstarter_file, value);
+		else if (!strcmp(name, "NEUTRINO_ELF"))
+			strcpy(setting->neutrino_file, value);
 		//----------
 		else if (!strcmp(name, "PSU_HugeNames"))
 			setting->PSU_HugeNames = atoi(value);
@@ -958,8 +977,6 @@ int loadConfig(char *mainMsg, char *CNF)
 		setting->LK_Title[i][MAX_ELF_TITLE - 1] = 0;
 	free(RAM_p);
 	snprintf(LoadedConfigPath, sizeof(LoadedConfigPath), "%s", loaded_path[0] ? loaded_path : cnf_path);
-	swapKeys = setting->swapKeys;  //sync bare global used by all pad loops (applies saved config)
-
 	sprintf(mainMsg, "%s (%s)", LNG(Loaded_Config), cnf_path);
 	return 0;
 }
@@ -1002,6 +1019,7 @@ enum CONFIG_MAIN {
 	CONFIG_MAIN_SCREEN,
 	CONFIG_MAIN_SETTINGS,
 	CONFIG_MAIN_NETWORK,
+	CONFIG_MAIN_SMB,
 	CONFIG_MAIN_ADVANCED,
 	CONFIG_MAIN_LAST = CONFIG_MAIN_ADVANCED,
 
@@ -1406,11 +1424,13 @@ void config(char *mainMsg, char *CNF)
 						                       save_cwd_path, sizeof(save_cwd_path),
 						                       save_sysconf_path, sizeof(save_sysconf_path),
 						                       CNF, LoadedConfigPath, &has_override_path);
-					} else if (s == CONFIG_MAIN_NETWORK) {
-						Config_Network();
-					} else if (s == CONFIG_MAIN_ADVANCED) {
-						Config_Advanced();
-					} else if (s == CONFIG_MAIN_SAVE) {
+				} else if (s == CONFIG_MAIN_NETWORK) {
+					Config_Network();
+				} else if (s == CONFIG_MAIN_SMB) {
+					Config_SMB();
+				} else if (s == CONFIG_MAIN_ADVANCED) {
+					Config_Advanced();
+				} else if (s == CONFIG_MAIN_SAVE) {
 						save_target = configSaveTargetPrompt(save_override_path, save_cwd_path, save_sysconf_path, LoadedConfigPath, has_override_path);
 						if (save_target != CONFIG_SAVE_TARGET_CANCEL) {
 							if (save_target == CONFIG_SAVE_TARGET_OVERRIDE)
@@ -1458,19 +1478,19 @@ void config(char *mainMsg, char *CNF)
 						strcpy(c, "  Default: ");
 						break;
 					case CONFIG_MAIN_BTN_CIRCLE:
-						strcpy(c, "  \xff"
+						strcpy(c, "  \xFF"
 						          "0     : ");
 						break;
 					case CONFIG_MAIN_BTN_CROSS:
-						strcpy(c, "  \xff"
+						strcpy(c, "  \xFF"
 						          "1     : ");
 						break;
 					case CONFIG_MAIN_BTN_SQUARE:
-						strcpy(c, "  \xff"
+						strcpy(c, "  \xFF"
 						          "2     : ");
 						break;
 					case CONFIG_MAIN_BTN_TRIANGLE:
-						strcpy(c, "  \xff"
+						strcpy(c, "  \xFF"
 						          "3     : ");
 						break;
 					case CONFIG_MAIN_BTN_L1:
@@ -1523,7 +1543,10 @@ void config(char *mainMsg, char *CNF)
 			sprintf(c, "  %s...", LNG(Network_Settings));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
-			sprintf(c, "  %s...", LNG(Advanced_Settings));
+			sprintf(c, "  %s...", LNG(SMB_Config));
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+			sprintf(c, "  Advanced Settings...");
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 			y += FONT_HEIGHT / 2;
@@ -1546,51 +1569,51 @@ void config(char *mainMsg, char *CNF)
 				//Tooltip section
 				if (s < CONFIG_MAIN_AFT_BTNS) {
 					if (setting->PathPad_Lock) {
-						len = sprintf(c, "\xff"
+						len = sprintf(c, "\xFF"
 						                 "2:%s",
 						              LNG(Edit_Title));
 					} else if (swapKeys) {
-						len = sprintf(c, "\xff"
-						                 "1:%s \xff"
-						                 "0:%s \xff"
+						len = sprintf(c, "\xFF"
+						                 "1:%s \xFF"
+						                 "0:%s \xFF"
 						                 "2:%s",
 						              LNG(Browse), LNG(Clear), LNG(Edit_Title));
 					} else {
-						len = sprintf(c, "\xff"
-						                 "0:%s \xff"
-						                 "1:%s \xff"
+						len = sprintf(c, "\xFF"
+						                 "0:%s \xFF"
+						                 "1:%s \xFF"
 						                 "2:%s",
 						              LNG(Browse), LNG(Clear), LNG(Edit_Title));
 				}
 			} else if ((s == CONFIG_MAIN_SHOW_TITLES) || (s == CONFIG_MAIN_FILENAME)) {
 				if (swapKeys)
-					len = sprintf(c, "\xff"
+					len = sprintf(c, "\xFF"
 					                 "1:%s",
 					              LNG(Change));
 				else
-					len = sprintf(c, "\xff"
+					len = sprintf(c, "\xFF"
 					                 "0:%s",
 					              LNG(Change));
 			} else if (s == CONFIG_MAIN_SAVE) {
 				if (swapKeys)
-					len = sprintf(c, "\xff"
+					len = sprintf(c, "\xFF"
 					                 "1:%s",
 					              LNG(Select));
 				else
-					len = sprintf(c, "\xff"
+					len = sprintf(c, "\xFF"
 					                 "0:%s",
 					              LNG(Select));
 			} else {
 				if (swapKeys)
-					len = sprintf(c, "\xff"
+					len = sprintf(c, "\xFF"
 					                 "1:%s",
 					              LNG(OK));
 				else
-					len = sprintf(c, "\xff"
+					len = sprintf(c, "\xFF"
 					                 "0:%s",
 					              LNG(OK));
 			}
-			sprintf(&c[len], " \xff"
+			sprintf(&c[len], " \xFF"
 			                 "3:%s",
 			        LNG(Return));
 			setScrTmp(localMsg, c);

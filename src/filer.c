@@ -10,6 +10,11 @@
 #include "init.h"
 #include "main_startup.h"
 
+#ifdef NETFS
+#include <smb2.h>
+#include <nfs.h>
+#endif
+
 #define MC_ATTR_norm_folder 0x8427  //Normal folder on PS2 MC
 #define MC_ATTR_norm_file 0x8497    //file (PS2/PS1) on PS2 MC
 
@@ -74,8 +79,9 @@ char mountedDVRPParty[MOUNT_LIMIT][MAX_NAME];
 int latestDVRPMount = -1;
 #endif
 
-int file_show = 1;  //dlanor: 0==name_only, 1==name+size+time, 2==title+size+time
+int file_show = FILE_SHOW_NAME_DETAILS;
 int file_sort = 1;  //dlanor: 0==none, 1==name, 2==title, 3==mtime
+int file_sort_descending = FALSE;
 int size_valid = 0;
 int time_valid = 0;
 static char hddParties[2][MAX_PARTITIONS][MAX_PART_NAME + 1];
@@ -1573,6 +1579,12 @@ int getDir(const char *path, FILEINFO *info)
 		n = readUDPFS(path, info, max);
 #endif
 #endif
+#ifdef NETFS
+	else if (!strncmp(path, "SMB:", 4))
+		n = readSMB2(path, info, max);
+	else if (!strncmp(path, "nfs:", 4))
+		n = readNFS(path, info, max);
+#endif
 #ifdef MMCE
 	else if (!strncmp(path, "mmce", 4)) {
 		loadMmceModules();
@@ -1762,6 +1774,19 @@ int setFileList(const char *path, const char *ext, FILEINFO *files, int cnfmode)
 			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
 		}
 
+#ifdef DVRP
+		if (console_is_PSX || boot_show_all_devices) {
+			strcpy(files[nfiles].name, "dvr_hdd0:");
+			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
+		}
+#endif
+#ifdef XFROM
+		if (console_is_PSX || boot_show_all_devices) {
+			strcpy(files[nfiles].name, "xfrom0:");
+			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
+		}
+#endif
+
 #ifdef EXFAT
 		if (allow_usb_devices && shouldShowAtaDevice(0)) {
 			strcpy(files[nfiles].name, "ata0:");
@@ -1776,19 +1801,6 @@ int setFileList(const char *path, const char *ext, FILEINFO *files, int cnfmode)
 			strcpy(files[nfiles].name, "cdfs:");
 			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
 
-#ifdef XFROM
-			if (console_is_PSX || boot_show_all_devices) {
-				strcpy(files[nfiles].name, "xfrom0:");
-				files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
-			}
-#endif
-
-#ifdef DVRP
-			if (console_is_PSX || boot_show_all_devices) {
-				strcpy(files[nfiles].name, "dvr_hdd0:");
-				files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
-			}
-#endif
 			if (!cnfmode) {
 				//This condition blocks selecting any CONFIG items on PC
 				//or in a virtual memory card
@@ -1807,6 +1819,10 @@ int setFileList(const char *path, const char *ext, FILEINFO *files, int cnfmode)
 			}
 #ifdef UDPFS
 			strcpy(files[nfiles].name, "udpfs:");
+			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
+#endif
+#ifdef NETFS
+			strcpy(files[nfiles].name, "SMB:");
 			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
 #endif
 			if (cnfmode < 2) {
@@ -1877,7 +1893,7 @@ int setFileList(const char *path, const char *ext, FILEINFO *files, int cnfmode)
 			}
 			nfiles = j;
 		}
-		if ((file_show == 2) || (file_sort == 2)) {
+		if (fileShowTitles() || (file_sort == 2)) {
 			for (i = 1; i < nfiles; i++) {
 				ret = filerGetGameTitle(path, &files[i], files[i].title);
 				if (ret < 0)

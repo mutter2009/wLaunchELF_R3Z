@@ -3,6 +3,10 @@
 //--------------------------------------------------------------
 #include "filer_internal.h"
 
+#ifdef NETFS
+#include "netfs_compat.h"
+#endif
+
 enum {
 	TRANSFER_STORAGE_DEFAULT = 0,
 	TRANSFER_STORAGE_MMCE,
@@ -98,6 +102,12 @@ int ensurePathDeviceStackReady(const char *path)
 #ifdef UDPFS
 	if (!strncmp(path, "udpfs", 5)) {
 		return load_udpfs();
+	}
+#endif
+#ifdef NETFS
+	if (!strncmp(path, "SMB:", 4) || !strncmp(path, "nfs:", 4)) {
+		init_netfs();
+		return netfs_net_inited;
 	}
 #endif
 	return TRUE;

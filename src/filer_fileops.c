@@ -2,6 +2,55 @@
 #include "filer_shared.h"
 #include "init.h"
 
+#ifdef NETFS
+#include <smb2.h>
+#include <nfs.h>
+
+/* NETFS (SMB2/3 + NFS) file handles are object pointers, not integer fds.
+ * We keep an in-RAM table mapping a high-base integer fd back to the handle,
+ * so the rest of the filer keeps using its int-fd convention unchanged. */
+#define NETFS_FD_BASE 0x4000
+#define NETFS_FD_SLOTS 32
+typedef struct {
+	unsigned char active;
+	unsigned char is_nfs;
+	union {
+		struct SMB2FH *smb2;
+		struct NFSFH *nfs;
+	} h;
+} netfs_fd_t;
+static netfs_fd_t netfs_fds[NETFS_FD_SLOTS];
+
+static int netfsAllocFd(void)
+{
+	int i;
+	for (i = 0; i < NETFS_FD_SLOTS; i++) {
+		if (!netfs_fds[i].active) {
+			netfs_fds[i].active = 1;
+			netfs_fds[i].is_nfs = 0;
+			netfs_fds[i].h.smb2 = NULL;
+			return NETFS_FD_BASE + i;
+		}
+	}
+	return -1;
+}
+
+static netfs_fd_t *netfsLookup(int fd)
+{
+	int i = fd - NETFS_FD_BASE;
+	if (i < 0 || i >= NETFS_FD_SLOTS || !netfs_fds[i].active)
+		return NULL;
+	return &netfs_fds[i];
+}
+
+static void netfsFreeFd(int fd)
+{
+	int i = fd - NETFS_FD_BASE;
+	if (i >= 0 && i < NETFS_FD_SLOTS)
+		netfs_fds[i].active = 0;
+}
+#endif
+
 #ifdef ULE_DEBUG_BUILD
 #ifndef FILEOP_TRACE
 #define FILEOP_TRACE 1
@@ -201,6 +250,12 @@ limited:
 int genRmdir(char *path)
 {
 	int ret;
+#ifdef NETFS
+	if (!strncmp(path, "SMB:", 4))
+		return SMB2rmdir(path);
+	if (!strncmp(path, "nfs:", 4))
+		return NFSrmdir(path);
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 	char log_path[MAX_PATH];
@@ -232,6 +287,12 @@ int genRmdir(char *path)
 int genRemove(char *path)
 {
 	int ret;
+#ifdef NETFS
+	if (!strncmp(path, "SMB:", 4))
+		return SMB2unlink(path);
+	if (!strncmp(path, "nfs:", 4))
+		return NFSunlink(path);
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 	char log_path[MAX_PATH];
@@ -269,6 +330,26 @@ int genGetStat(const char *path, iox_stat_t *stat)
 
 	if (path == NULL || path[0] == '\0' || stat == NULL)
 		return -1;
+#ifdef NETFS
+	if (!strncmp(path, "SMB:", 4)) {
+		int is_dir;
+		memset(stat, 0, sizeof(*stat));
+		if (SMB2stat(path, &is_dir) == 0) {
+			stat->mode = is_dir ? FIO_S_IFDIR : FIO_S_IFREG;
+			return 0;
+		}
+		return -1;
+	}
+	if (!strncmp(path, "nfs:", 4)) {
+		int is_dir;
+		memset(stat, 0, sizeof(*stat));
+		if (NFSstat(path, &is_dir) == 0) {
+			stat->mode = is_dir ? FIO_S_IFDIR : FIO_S_IFREG;
+			return 0;
+		}
+		return -1;
+	}
+#endif
 	snprintf(stat_path, sizeof(stat_path), "%s", path);
 #if defined(ETH) || defined(UDPFS)
 	makeHostPath(stat_path, stat_path);
@@ -284,6 +365,12 @@ int genMkdir(const char *path, int mode)
 {
 	char mkdir_path[MAX_PATH];
 	int ret;
+#ifdef NETFS
+	if (!strncmp(path, "SMB:", 4))
+		return SMB2mkdir(path, mode);
+	if (!strncmp(path, "nfs:", 4))
+		return NFSmkdir(path, mode);
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 	char log_path[MAX_PATH];
@@ -317,6 +404,36 @@ int genOpen(const char *path, int mode)
 {
 	char open_path[MAX_PATH], alt_path[MAX_PATH], *sep;
 	int fd;
+#ifdef NETFS
+	if (!strncmp(path, "SMB:", 4)) {
+		struct SMB2FH *nfh = SMB2open(path, mode);
+		int nfd;
+		if (nfh == NULL)
+			return -1;
+		nfd = netfsAllocFd();
+		if (nfd < 0) {
+			SMB2close(nfh);
+			return -1;
+		}
+		netfs_fds[nfd - NETFS_FD_BASE].is_nfs = 0;
+		netfs_fds[nfd - NETFS_FD_BASE].h.smb2 = nfh;
+		return nfd;
+	}
+	if (!strncmp(path, "nfs:", 4)) {
+		struct NFSFH *nfh = NFSopen(path, mode);
+		int nfd;
+		if (nfh == NULL)
+			return -1;
+		nfd = netfsAllocFd();
+		if (nfd < 0) {
+			NFSclose(nfh);
+			return -1;
+		}
+		netfs_fds[nfd - NETFS_FD_BASE].is_nfs = 1;
+		netfs_fds[nfd - NETFS_FD_BASE].h.nfs = nfh;
+		return nfd;
+	}
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 	char req_log_path[MAX_PATH];
@@ -397,6 +514,12 @@ int genOpen(const char *path, int mode)
 int genDopen(char *path)
 {
 	int fd;
+#ifdef NETFS
+	/* Directory enumeration for SMB2/NFS is handled by getDir -> readSMB2 /
+	 * readNFS; there is no separate directory-handle API, so reject here. */
+	if (!strncmp(path, "SMB:", 4) || !strncmp(path, "nfs:", 4))
+		return -1;
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 	char req_log_path[MAX_PATH];
@@ -457,6 +580,17 @@ int genDopen(char *path)
 s64 genLseek(int fd, s64 where, int how)
 {
 	s64 ret64;
+#ifdef NETFS
+	netfs_fd_t *nf = netfsLookup(fd);
+	if (nf != NULL) {
+		int r;
+		if (nf->is_nfs)
+			r = NFSlseek(nf->h.nfs, (int)where, how);
+		else
+			r = SMB2lseek(nf->h.smb2, (int)where, how);
+		return (s64)r;
+	}
+#endif
 #if FILEOP_TRACE
 	int ret32 = -1;
 	int fallback_used = 0;
@@ -498,6 +632,14 @@ s64 genLseek(int fd, s64 where, int how)
 int genRead(int fd, void *buf, int size)
 {
 	int ret;
+#ifdef NETFS
+	netfs_fd_t *nf = netfsLookup(fd);
+	if (nf != NULL) {
+		if (nf->is_nfs)
+			return NFSread(nf->h.nfs, (char *)buf, size);
+		return SMB2read(nf->h.smb2, (char *)buf, size);
+	}
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 
@@ -516,6 +658,14 @@ int genRead(int fd, void *buf, int size)
 int genWrite(int fd, void *buf, int size)
 {
 	int ret;
+#ifdef NETFS
+	netfs_fd_t *nf = netfsLookup(fd);
+	if (nf != NULL) {
+		if (nf->is_nfs)
+			return NFSwrite(nf->h.nfs, (char *)buf, size);
+		return SMB2write(nf->h.smb2, (char *)buf, size);
+	}
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 
@@ -534,6 +684,18 @@ int genWrite(int fd, void *buf, int size)
 int genClose(int fd)
 {
 	int ret;
+#ifdef NETFS
+	netfs_fd_t *nf = netfsLookup(fd);
+	if (nf != NULL) {
+		int r;
+		if (nf->is_nfs)
+			r = NFSclose(nf->h.nfs);
+		else
+			r = SMB2close(nf->h.smb2);
+		netfsFreeFd(fd);
+		return r;
+	}
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 
@@ -554,6 +716,13 @@ int genClose(int fd)
 int genDclose(int fd)
 {
 	int ret;
+#ifdef NETFS
+	netfs_fd_t *nf = netfsLookup(fd);
+	if (nf != NULL) {
+		netfsFreeFd(fd);
+		return 0;
+	}
+#endif
 #if FILEOP_TRACE
 	u64 t0, t1;
 

@@ -7,11 +7,11 @@
 #include "filer_shared.h"
 #include "gui_hdd0_format.h"
 #include "init.h"
+#include "main_console_info.h"
+#include "main_title.h"
 
-// Built-in ELISA100.FNT data (src/font_elisa.c), used as fallback so Japanese
-// MC save titles display without an external font file. External ELISA100.FNT
-// in WLE.ELF's directory will still override this built-in data if present.
-extern const unsigned char font_elisa_builtin[];
+#define SOURCE_DEVICE_WAIT_INTERVAL_MS 1000
+#define SOURCE_DEVICE_WAIT_TIMEOUT_MS 6000
 
 #define SOURCE_DEVICE_WAIT_INTERVAL_MS 1000
 #define SOURCE_DEVICE_WAIT_TIMEOUT_MS 6000
@@ -33,73 +33,112 @@ static int isGenericUsbRootPath(const char *path)
 
 static const char *getUsbRootDeviceLabel(char unit)
 {
-	static char label[32];
+	static char label[] = "usb0:/";
 
 	if ((unit < '0') || (unit > '9'))
 		return NULL;
 
-	sprintf(label, "USB 存储%c", unit);
+	label[3] = unit;
 	return label;
 }
 
 static const char *getRootDeviceLabel(const char *name)
 {
 	if (!strcmp(name, "mc0:"))
-		return "记忆卡0 (mc0)";
+		return "mc0:/";
 	if (!strcmp(name, "mc1:"))
-		return "记忆卡1 (mc1)";
+		return "mc1:/";
 	if (!strcmp(name, "mass:"))
-		return "USB 存储";
+		return "usb:/";
 	if (!strncmp(name, "mass", 4) && name[4] >= '0' && name[4] <= '9' && name[5] == ':' && name[6] == '\0')
 		return getUsbRootDeviceLabel(name[4]);
 	if (!strcmp(name, "usb:"))
-		return "USB 存储";
+		return "usb:/";
 	if (!strncmp(name, "usb", 3) && name[3] >= '0' && name[3] <= '9' && name[4] == ':' && name[5] == '\0')
 		return getUsbRootDeviceLabel(name[3]);
 #ifdef MMCE
 	if (!strcmp(name, "mmce0:"))
-		return "MMCE 存储卡0";
+		return "mmce0:/";
 	if (!strcmp(name, "mmce1:"))
-		return "MMCE 存储卡1";
+		return "mmce1:/";
 #endif
 #ifdef MX4SIO
 	if (!strcmp(name, "mx4sio:"))
-		return "MX4SIO 存储卡";
+		return "mx4sio:/";
 #endif
 	if (!strcmp(name, "hdd0:"))
-		return "硬盘 (hdd0)";
+		return "hdd0:/";
 	if (!strcmp(name, "hdd1:"))
-		return "硬盘2 (hdd1)";
+		return "hdd1:/";
 #ifdef EXFAT
 	if (!strcmp(name, "ata:"))
-		return "ATA 硬盘 (ata0)";
+		return "ata0:/";
 	if (!strcmp(name, "ata0:"))
-		return "ATA 硬盘 (ata0)";
+		return "ata0:/";
 	if (!strcmp(name, "ata1:"))
-		return "ATA 硬盘 (ata1)";
+		return "ata1:/";
 #endif
 	if (!strcmp(name, "cdfs:"))
-		return "光盘 (cdfs)";
+		return "cdfs:/";
 #ifdef XFROM
 	if (!strcmp(name, "xfrom0:") || !strcmp(name, "xfrom:"))
-		return "XFROM 存储";
+		return "xfrom0:/";
 #endif
 #ifdef DVRP
 	if (!strcmp(name, "dvr_hdd0:"))
-		return "DVR 硬盘";
+		return "dvr_hdd0:/";
 #endif
 #ifdef ETH
 	if (!strcmp(name, "host:"))
-		return "HOST 网络";
+		return "host:/";
 #endif
 #ifdef UDPFS
 	if (!strcmp(name, "udpfs:"))
-		return "UDPFS 网络";
+		return "udpfs:/";
 #endif
 	if (!strcmp(name, LNG(MISC)))
-		return "其他";
+		return "MISC/";
 
 	return NULL;
+}
+
+static const char *getRootDeviceDescription(const char *name)
+{
+	static const struct {
+		const char *label;
+		const char *description;
+	} devices[] = {
+		{"mc0:/", "Memory Card 1"},
+		{"mc1:/", "Memory Card 2"},
+		{"mmce0:/", "MMCE Slot 1"},
+		{"mmce1:/", "MMCE Slot 2"},
+		{"mx4sio:/", "MX4SIO"},
+		{"hdd0:/", "HDD 1 (APA)"},
+		{"hdd1:/", "HDD 2 (APA)"},
+		{"ata0:/", "HDD 1 (exFAT)"},
+		{"ata1:/", "HDD 2 (exFAT)"},
+		{"cdfs:/", "CDVD Drive"},
+		{"udpfs:/", "UDPFS Network Server"},
+		{"dvr_hdd0:/", "PSX DVR"},
+		{"xfrom0:/", "PSX Onboard Flash"}
+	};
+	static char usb_description[16];
+	const char *label = getRootDeviceLabel(name);
+	int i;
+
+	if (label == NULL)
+		return "";
+	if (!strcmp(label, "usb:/"))
+		return "USB";
+	if (!strncmp(label, "usb", 3) && label[3] >= '0' && label[3] <= '9') {
+		snprintf(usb_description, sizeof(usb_description), "USB %d", label[3] - '0' + 1);
+		return usb_description;
+	}
+	for (i = 0; i < (int)(sizeof(devices) / sizeof(devices[0])); i++) {
+		if (!strcmp(label, devices[i].label))
+			return devices[i].description;
+	}
+	return "";
 }
 
 static void waitUntilTimer(u64 end_time)
@@ -317,11 +356,16 @@ static int isTitleCfgPathEligible(const char *path, int menu_disabled)
 {
 	return ((!strncmp(path, "mass", 4)) ||
 	        (!strncmp(path, "usb", 3)) ||
+	        (!strncmp(path, "mc0:", 4)) ||
+	        (!strncmp(path, "mc1:", 4)) ||
 #ifdef MMCE
 	        (!strncmp(path, "mmce", 4)) ||
 #endif
 #ifdef MX4SIO
 	        (!strncmp(path, "mx4sio", 6)) ||
+#endif
+#ifdef UDPFS
+	        (!strncmp(path, "udpfs", 5)) ||
 #endif
 	        (!strncmp(path, "ata", 3)) ||
 	        (isHddBrowserPath(path) && !menu_disabled));
@@ -399,10 +443,10 @@ static int menu(const char *path, FILEINFO *file)
 	menu_len = strlen(LNG(TextEditor)) > menu_len ? strlen(LNG(TextEditor)) : menu_len;
 	menu_len = strlen(LNG(Launch_With_Args)) > menu_len ? strlen(LNG(Launch_With_Args)) : menu_len;
 	menu_len = strlen(psu_action_label) > menu_len ? strlen(psu_action_label) : menu_len;
-	menu_len = strlen(LNG(time_manip)) > menu_len ? strlen(LNG(time_manip)) : menu_len;
+	menu_len = strlen(LNG(Set_Custom_Date)) > menu_len ? strlen(LNG(Set_Custom_Date)) : menu_len;
 	menu_len = strlen(LNG(title_cfg)) > menu_len ? strlen(LNG(title_cfg)) : menu_len;
 	menu_len = (strlen(LNG(Mount)) + 6) > menu_len ? (strlen(LNG(Mount)) + 6) : menu_len;
-
+	
 
 	int menu_ch_w = menu_len + 1;                                 //Total characters in longest menu string
 	int menu_ch_h = NUM_MENU;                                     //Total number of menu lines
@@ -439,17 +483,7 @@ static int menu(const char *path, FILEINFO *file)
 		enable[MOUNTVMC1] = FALSE;
 		enable[GETSIZE] = FALSE;
 	}
-//#ifdef TMANIP
-	if (                                                        //if
-	    (file->stats.AttrFile & sceMcFileAttrSubdir) &&         //pointing to a folder
-	    (strcmp(file->name, "..")) &&                           //it isnt the ".." option
-	    ((!strcmp(path, "mc0:/")) || (!strcmp(path, "mc1:/")))  //we're on Memory card roots
-	) {
-		enable[TIMEMANIP] = TRUE;
-	} else {
-		enable[TIMEMANIP] = FALSE;
-	}
-//#endif //TMANIP
+	enable[TIMEMANIP_CUSTOM] = filerCanOrganizeFolderTimestamps(path);
 	if (genCmpFileExt(file->name, "ELF") && isTitleCfgPathEligible(path, menu_disabled))
 		enable[TITLE_CFG] = TRUE;
 	else
@@ -569,10 +603,8 @@ static int menu(const char *path, FILEINFO *file)
 					strcpy(tmp, LNG(Launch_With_Args));
 				else if (i == TITLE_CFG)
 					strcpy(tmp, LNG(title_cfg));
-#ifdef TMANIP
-				else if (i == TIMEMANIP)
-					strcpy(tmp, LNG(time_manip));
-#endif //TMANIP
+				else if (i == TIMEMANIP_CUSTOM)
+					strcpy(tmp, LNG(Set_Custom_Date));
 
 				if (enable[i])
 					color = setting->color[COLOR_TEXT];
@@ -751,6 +783,7 @@ static int BrowserModePopup(void)
 
 	int entry_file_show = file_show;
 	int entry_file_sort = file_sort;
+	int entry_file_sort_descending = file_sort_descending;
 
 	int Show_len = strlen(LNG(Show_Content_as)) + 1;
 	int Sort_len = strlen(LNG(Sort_Content_by)) + 1;
@@ -762,16 +795,22 @@ static int BrowserModePopup(void)
 		menu_len = i;
 	if (menu_len < (i = strlen(LNG(Game_Title)) + strlen(LNG(_plus_Details))))
 		menu_len = i;
+	if (menu_len < (i = strlen(LNG(Filename)) + strlen(" A -> Z")))
+		menu_len = i;
+	if (menu_len < (i = strlen(LNG(Game_Title)) + strlen(" A -> Z")))
+		menu_len = i;
 	if (menu_len < (i = strlen(LNG(No_Sort))))
 		menu_len = i;
-	if (menu_len < (i = strlen(LNG(Timestamp))))
+	if (menu_len < (i = strlen(LNG(Timestamp)) + 1 + strlen(LNG(Old_to_New))))
+		menu_len = i;
+	if (menu_len < (i = strlen(LNG(Timestamp)) + 1 + strlen(LNG(New_to_Old))))
 		menu_len = i;
 	if (menu_len < (i = strlen(LNG(Back_to_Browser))))
 		menu_len = i;
 	menu_len += 3;  //All of the above strings are indented 3 spaces, for tooltips
 
 	int menu_ch_w = menu_len + 1;  //Total characters in longest menu string
-	int menu_ch_h = 14;            //Total number of menu lines
+	int menu_ch_h = 13;            //Total number of menu lines
 	int mSprite_w = (menu_ch_w + 3) * FONT_WIDTH;
 	int mSprite_h = (menu_ch_h + 1) * FONT_HEIGHT;
 	int mSprite_X1 = SCREEN_WIDTH / 2 - mSprite_w / 2;
@@ -792,59 +831,33 @@ static int BrowserModePopup(void)
 		if (readpad()) {
 			switch (new_pad) {
 				case PAD_RIGHT:
+					file_sort_descending = FALSE;
 					file_sort = 0;
 					event |= 2;  //event |= valid pad command
 					break;
 				case PAD_DOWN:
+					file_sort_descending = (file_sort == 1) && !file_sort_descending;
 					file_sort = 1;
 					event |= 2;  //event |= valid pad command
 					break;
 				case PAD_LEFT:
+					file_sort_descending = (file_sort == 2) && !file_sort_descending;
 					file_sort = 2;
 					event |= 2;  //event |= valid pad command
 					break;
 				case PAD_UP:
+					file_sort_descending = (file_sort == 3) && !file_sort_descending;
 					file_sort = 3;
 					event |= 2;  //event |= valid pad command
 					break;
 				case PAD_CIRCLE:
-					file_show = 0;
+					file_show = (file_show == FILE_SHOW_NAME) ? FILE_SHOW_NAME_DETAILS : FILE_SHOW_NAME;
 					event |= 2;  //event |= valid pad command
-					break;
-				case PAD_CROSS:
-					file_show = 1;
-					event |= 2;  //event |= valid pad command
-					if ((file_show == 2) && (elisaFnt == NULL))
-						elisaFnt = (unsigned char *)font_elisa_builtin;
-					if ((file_show == 2) && (elisaFnt == (unsigned char *)font_elisa_builtin) && (elisa_failed == FALSE)) {
-						int fd, res;
-						elisa_failed = TRUE;  //Default to FAILED. If it succeeds, then this status will be cleared.
-
-						res = genFixPath("uLE:/ELISA100.FNT", tmp);
-						if (!strncmp(tmp, "cdrom", 5))
-							strcat(tmp, ";1");
-						if (res >= 0) {
-							fd = genOpen(tmp, FIO_O_RDONLY);
-							if (fd >= 0) {
-								test = genLseek(fd, 0, SEEK_END);
-								if (test == 55016) {
-									elisaFnt = (unsigned char *)memalign(64, test);
-									genLseek(fd, 0, SEEK_SET);
-									genRead(fd, elisaFnt, test);
-
-									elisa_failed = FALSE;
-								}
-								genClose(fd);
-							}
-						}
-					}
 					break;
 				case PAD_SQUARE:
-					file_show = 2;
+					file_show = (file_show == FILE_SHOW_TITLE) ? FILE_SHOW_TITLE_DETAILS : FILE_SHOW_TITLE;
 					event |= 2;  //event |= valid pad command
-					if ((file_show == 2) && (elisaFnt == NULL))
-						elisaFnt = (unsigned char *)font_elisa_builtin;
-					if ((file_show == 2) && (elisaFnt == (unsigned char *)font_elisa_builtin) && (elisa_failed == FALSE)) {
+					if (fileShowTitles() && (elisaFnt == NULL) && (elisa_failed == FALSE)) {
 						int fd, res;
 						elisa_failed = TRUE;  //Default to FAILED. If it succeeds, then this status will be cleared.
 
@@ -868,7 +881,8 @@ static int BrowserModePopup(void)
 					}
 					break;
 				case PAD_TRIANGLE:
-					return (file_show != entry_file_show) || (file_sort != entry_file_sort);
+					return (file_show != entry_file_show) || (file_sort != entry_file_sort) ||
+					       (file_sort_descending != entry_file_sort_descending);
 			}  //ends switch(new_pad)
 		}      //ends if(readpad())
 
@@ -887,37 +901,30 @@ static int BrowserModePopup(void)
 					sprintf(tmp, "   %s", &minuses_s[80 - Show_len]);
 				else if (i == 2)
 					sprintf(tmp, "\xFF"
-					             "0 %s",
-					        LNG(Filename));
+					             "0 %s%s",
+					        LNG(Filename), file_show == FILE_SHOW_NAME_DETAILS ? LNG(_plus_Details) : "");
 				else if (i == 3)
 					sprintf(tmp, "\xFF"
-					             "1 %s%s",
-					        LNG(Filename), LNG(_plus_Details));
-				else if (i == 4)
-					sprintf(tmp, "\xFF"
 					             "2 %s%s",
-					        LNG(Game_Title), LNG(_plus_Details));
-				else if (i == 6)
+					        LNG(Game_Title), file_show == FILE_SHOW_TITLE_DETAILS ? LNG(_plus_Details) : "");
+				else if (i == 5)
 					sprintf(tmp, "   %s:", LNG(Sort_Content_by));
-				else if (i == 7)
+				else if (i == 6)
 					sprintf(tmp, "   %s", &minuses_s[80 - Sort_len]);
-				else if (i == 8)
+				else if (i == 7)
 					sprintf(tmp, "\xFF"
 					             ": %s",
 					        LNG(No_Sort));
+				else if (i == 8)
+					snprintf(tmp, sizeof(tmp), "\xFF" "; %s %s", LNG(Filename),
+					         (file_sort == 1 && file_sort_descending) ? "Z -> A" : "A -> Z");
 				else if (i == 9)
-					sprintf(tmp, "\xFF"
-					             "; %s",
-					        LNG(Filename));
+					snprintf(tmp, sizeof(tmp), "\xFF" "< %s %s", LNG(Game_Title),
+					         (file_sort == 2 && file_sort_descending) ? "Z -> A" : "A -> Z");
 				else if (i == 10)
-					sprintf(tmp, "\xFF"
-					             "< %s",
-					        LNG(Game_Title));
-				else if (i == 11)
-					sprintf(tmp, "\xFF"
-					             "= %s",
-					        LNG(Timestamp));
-				else if (i == 13)
+					snprintf(tmp, sizeof(tmp), "\xFF" "= %s %s", LNG(Timestamp),
+					         (file_sort == 3 && file_sort_descending) ? LNG(New_to_Old) : LNG(Old_to_New));
+				else if (i == 12)
 					sprintf(tmp, "\xFF"
 					             "3 %s",
 					        LNG(Back_to_Browser));
@@ -926,7 +933,8 @@ static int BrowserModePopup(void)
 
 				printXY(tmp, mSprite_X1 + 2 * FONT_WIDTH, y, setting->color[COLOR_TEXT], TRUE, 0);
 				//Display marker for current modes
-				if ((file_show == i - 2) || (file_sort == i - 8))
+				if ((i == 2 && !fileShowTitles()) || (i == 3 && fileShowTitles()) ||
+				    (i >= 7 && i <= 10 && file_sort == i - 7))
 					drawChar(LEFT_CUR, mSprite_X1 + FONT_WIDTH / 2, y, setting->color[COLOR_SELECT]);
 				y += FONT_HEIGHT;
 
@@ -967,43 +975,6 @@ static void submenu_func_GetSize(char *mess, char *path, FILEINFO *files);
 static void submenu_func_Paste(char *mess, char *path);
 static void submenu_func_psuPaste(char *mess, char *path);
 
-// Helpers for filename scrolling in file browser (handles SJIS/ASCII mixed titles)
-static int sjis_char_count_in_width(const unsigned char *s, int max_width)
-{
-	int w = 0, chars = 0;
-	while (*s) {
-		int char_w;
-		if (*s & 0x80) {
-			if (!s[1]) break;
-			char_w = 16;  // wide Japanese glyph (two ASCII cells)
-			s += 2;
-		} else {
-			char_w = 8;   // ASCII glyph
-			s += 1;
-		}
-		if (w + char_w > max_width) break;
-		w += char_w;
-		chars++;
-	}
-	return chars;
-}
-
-static int sjis_skip_chars(const unsigned char *s, int char_count)
-{
-	const unsigned char *start = s;
-	int chars = 0;
-	while (*s && chars < char_count) {
-		if (*s & 0x80) {
-			if (!s[1]) break;
-			s += 2;
-		} else {
-			s += 1;
-		}
-		chars++;
-	}
-	return s - start;
-}
-
 static int isRootSpacerEntry(const char *path, const FILEINFO *file)
 {
 	return path[0] == '\0' && file->name[0] == '\0';
@@ -1031,23 +1002,112 @@ static void skipRootSpacerSelection(const char *path, FILEINFO *files, int nfile
 	}
 }
 
+static int getBrowserListFontHeight(void)
+{
+	return (fileShowTitles() && (elisaFnt != NULL)) ? (FONT_HEIGHT + 2) : FONT_HEIGHT;
+}
+
+static int getBrowserDeviceInfoRows(const char *path)
+{
+	return (path[0] == '\0') ? 3 : 0;
+}
+
+static int getBrowserListRows(const char *path, int font_height)
+{
+	int rows;
+
+	rows = (Menu_end_y - Menu_start_y) / font_height - getBrowserDeviceInfoRows(path);
+	return (rows > 0) ? rows : 1;
+}
+
+static int getBrowserListEndY(const char *path, int font_height)
+{
+	return Menu_end_y - getBrowserDeviceInfoRows(path) * font_height;
+}
+
+static int getCenteredListTop(int selected, int count, int rows)
+{
+	int top, max_top, center_row;
+
+	if (rows <= 0 || count <= rows)
+		return 0;
+
+	if (selected < 0)
+		selected = 0;
+	else if (selected >= count)
+		selected = count - 1;
+
+	center_row = (rows - 1) / 2;
+	max_top = count - rows;
+	top = selected - center_row;
+
+	if (top < 0)
+		top = 0;
+	else if (top > max_top)
+		top = max_top;
+
+	return top;
+}
+
+static void formatBrowserMissingTimestamp(char *dst, size_t dst_size, int use_12h, int date_format)
+{
+	const char *date_text;
+
+	if (date_format == 1 || date_format == 2)
+		date_text = "--/--/----";
+	else
+		date_text = "----/--/--";
+
+	if (use_12h)
+		snprintf(dst, dst_size, "--:--:-- -- %s", date_text);
+	else
+		snprintf(dst, dst_size, "--:--:-- %s", date_text);
+}
+
+static void formatBrowserTimestamp(char *dst, size_t dst_size, const PS2TIME *timestamp, int use_12h, int date_format)
+{
+	char date_text[16];
+	char time_text[16];
+	int year;
+	int month;
+	int day;
+	int hour;
+	int minute;
+	int second;
+
+	year = (timestamp->year < 2256) ? timestamp->year : (timestamp->year - 256);
+	month = timestamp->month;
+	day = timestamp->day;
+	hour = timestamp->hour;
+	minute = timestamp->min;
+	second = timestamp->sec;
+	menuTitleConvertTimestampToLocalTime(&year, &month, &day, &hour, &minute, &second);
+	menuTitleFormatClockDate(date_text, sizeof(date_text), year, month, day, date_format);
+	menuTitleFormatClockTime(time_text, sizeof(time_text), hour, minute, second, use_12h);
+	snprintf(dst, dst_size, "%s %s", time_text, date_text);
+}
+
 int getFilePath(char *out, int cnfmode)
 {
 	char path[MAX_PATH], cursorEntry[MAX_PATH],
 	    msg0[MAX_PATH], msg1[MAX_PATH],
 	    tmp[MAX_PATH], tmp1[MAX_PATH], tmp2[MAX_PATH], ext[8], *p;
-	char display_name[MAX_PATH];
+	char device_model[CONSOLE_MODEL_NAME_MAX_LEN + 1];
+	char device_bootrom[CONSOLE_INFO_LINE_MAX_LEN];
+	char device_dvdver[CONSOLE_INFO_LINE_MAX_LEN];
 	const unsigned char *mcTitle;
-	const unsigned char *name_src;
 	u64 color;
 	FILEINFO files[MAX_ENTRY];
 	int top = 0, rows;
-	int x, y, y0, y1;
+	int x, y, y0, y1, list_end_y;
 	int i, j, ret, rv = -1;  //NB: rv is for return value of this function
 	int usb_unit;
 	int event, post_event = 0;
 	int font_height;
 	int iconbase, iconcolr;
+	int use_12h = 0, date_format = 0;
+	int details_column;
+	int device_info_ready = FALSE;
 
 	elisa_failed = FALSE;  //set at failure to load font, cleared at each browser entry
 
@@ -1071,13 +1131,12 @@ int getFilePath(char *out, int cnfmode)
 	nclipFiles = 0;
 	browser_cut = 0;
 
-	file_show = 1;
+	file_show = FILE_SHOW_NAME_DETAILS;
 	file_sort = 1;
+	file_sort_descending = FALSE;
 
-	font_height = FONT_HEIGHT;
-	if ((file_show == 2) && (elisaFnt != NULL))
-		font_height = FONT_HEIGHT + 2;
-	rows = (Menu_end_y - Menu_start_y) / font_height;
+	font_height = getBrowserListFontHeight();
+	rows = getBrowserListRows(path, font_height);
 
 	event = 1;  //event = initial entry
 	while (1) {
@@ -1511,21 +1570,15 @@ int getFilePath(char *out, int cnfmode)
 					else if (ret == GETSIZE) {
 						submenu_func_GetSize(msg0, path, files);
 					}  //ends GETSIZE
-//#ifdef TMANIP
-					else if (ret == TIMEMANIP) {
-#ifdef TMANIP_MORON
-						sprintf(msg1, "\n\n %s  [%s]  ?\n", LNG(change_timestamp_of), HACK_FOLDER);
-#else
-						sprintf(msg1, "\n\n %s  [%s]  ?\n", LNG(change_timestamp_of), files[browser_sel].name);
-#endif //TMANIP_MORON
-						if (filerConfirmExploitModify(path, &files[browser_sel]) > 0 && ynDialog(msg1) > 0) {
-							time_manip(path, &files[browser_sel], msg0);
+					else if (ret == TIMEMANIP_CUSTOM) {
+						ret = time_manip_organize(path, &files[browser_sel], msg0);
+						if (ret != 0)
 							browser_pushed = FALSE;
-							browser_repos = TRUE;  // TEST
-							browser_cd = TRUE;     //TEST
+						if (ret > 0) {
+							browser_repos = TRUE;
+							browser_cd = TRUE;
 						}
 					}
-//#endif //TMANIP
 
 				else if (ret == TITLE_CFG) {
 					if (filerConfirmExploitModify(path, &files[browser_sel]) > 0) {
@@ -1660,7 +1713,6 @@ int getFilePath(char *out, int cnfmode)
 				for (i = 0; i < browser_nfiles; i++) {
 					if (!strcmp(cursorEntry, files[i].name)) {
 						browser_sel = i;
-						top = browser_sel - 3;
 						break;
 					}
 				}
@@ -1672,34 +1724,44 @@ int getFilePath(char *out, int cnfmode)
 		}  //ends if(browser_cd)
 		if (!strncmp(path, "cdfs", 4))
 			uLE_cdStop();
-		if (top > browser_nfiles - rows)
-			top = browser_nfiles - rows;
-		if (top < 0)
-			top = 0;
+
+		font_height = getBrowserListFontHeight();
+		rows = getBrowserListRows(path, font_height);
 		if (browser_sel >= browser_nfiles)
 			browser_sel = browser_nfiles - 1;
 		if (browser_sel < 0)
 			browser_sel = 0;
 		if (browser_nfiles > 0)
 			skipRootSpacerSelection(path, files, browser_nfiles, &browser_sel, 1);
-		if (browser_sel >= top + rows)
-			top = browser_sel - rows + 1;
-		if (browser_sel < top)
-			top = browser_sel;
+		top = getCenteredListTop(browser_sel, browser_nfiles, rows);
 
 		if (event || post_event) {  //NB: We need to update two frame buffers per event
 
-		//Display section
-		clrScr(setting->color[COLOR_BACKGR]);
+			//Display section
+			clrScr(setting->color[COLOR_BACKGR]);
 
-		x = Menu_start_x;
+			x = Menu_start_x;
 			y = Menu_start_y;
-			font_height = FONT_HEIGHT;
-			if ((file_show == 2) && (elisaFnt != NULL)) {
+			font_height = getBrowserListFontHeight();
+			if (font_height != FONT_HEIGHT) {
 				y -= 2;
-				font_height = FONT_HEIGHT + 2;
 			}
-			rows = (Menu_end_y - Menu_start_y) / font_height;
+			rows = getBrowserListRows(path, font_height);
+			list_end_y = getBrowserListEndY(path, font_height);
+
+			if (path[0] == '\0' && !device_info_ready) {
+				if (ROMVER_data[0] == '\0')
+					uLE_InitializeRegion();
+				GetConsoleModelName(ROMVER_data, device_model, sizeof(device_model));
+				FormatConsoleBootrom(device_bootrom, sizeof(device_bootrom), ROMVER_data);
+				GetConsoleDvdVersion(device_dvdver, sizeof(device_dvdver));
+				device_info_ready = TRUE;
+			}
+
+			if (fileShowDetails())
+				menuTitleGetClockFormat(&use_12h, &date_format);
+			/* Keep the time/date edge immediately before the scrollbar in both clock formats. */
+			details_column = use_12h ? 41 : 44;
 
 			for (i = 0; i < rows; i++)  //Repeat loop for each browser text row
 			{
@@ -1720,7 +1782,7 @@ int getFilePath(char *out, int cnfmode)
 				if (!strcmp(files[top + i].name, ".."))
 					strcpy(tmp, "..");
 
-				else if ((file_show == 2) && files[top + i].title[0] != 0) {
+				else if (fileShowTitles() && files[top + i].title[0] != 0) {
 					mcTitle = files[top + i].title;
 				} else {  //Show normal file/folder names
 					const char *root_label;
@@ -1732,58 +1794,38 @@ int getFilePath(char *out, int cnfmode)
 						strcpy(tmp, root_label);
 					else
 						strcpy(tmp, files[top + i].name);
-					if (file_show > 0) {  //Does display mode include file details ?
-						name_limit = 43 * 8;
+					if (fileShowDetails() && strcmp(path, setting->Misc)) {  //Reserve space for details.
+						name_limit = (details_column - 1) * FONT_WIDTH;
 					} else {  //Filenames are shown without file details
 						name_limit = 71 * 8;
 					}
 				}
+				if (name_limit) {                   //Do we need to check name length ?
+					int name_end = name_limit / 7;  //Max string length for acceptable spacing
+
+					if (files[top + i].stats.AttrFile & sceMcFileAttrSubdir)
+						name_end -= 1;             //For folders, reserve one character for final '/'
+					if (strlen(tmp) > name_end) {  //Is name too long for clean display ?
+						tmp[name_end - 1] = '~';   //indicate filename abbreviation
+						tmp[name_end] = 0;         //abbreviate name length to make room for details
+					}
+				}
+
 				if (files[top + i].stats.AttrFile & sceMcFileAttrSubdir && path[0] != 0)
 					strcat(tmp, "/");
-
-			// Prepare display name; clip long names so they never overlap the details column
-			if (mcTitle != NULL) {
-				name_src = mcTitle;
-			} else {
-				name_src = (const unsigned char *)tmp;
-			}
-
-			if (name_limit > 0) {
-				int char_w = (mcTitle != NULL) ? 12 : 8;   // Japanese glyph 12px wide, ASCII 8px
-				int max_chars = name_limit / char_w;
-				if (max_chars < 3) max_chars = 3;
-				// Count visible characters (Shift-JIS aware: lead byte >= 0x80 = 2 bytes)
-				int n = 0, p = 0;
-				while (name_src[p]) {
-					p += ((unsigned char)name_src[p] >= 0x80) ? 2 : 1;
-					if (++n >= max_chars) break;
-				}
-				if (name_src[p] != 0) {
-					// Too long: keep (max_chars-1) chars and append '~'
-					int used = 0, c = 0;
-					while (c < max_chars - 1 && name_src[used]) {
-						used += ((unsigned char)name_src[used] >= 0x80) ? 2 : 1;
-						c++;
-					}
-					memcpy(display_name, name_src, used);
-					display_name[used] = '~';
-					display_name[used + 1] = '\0';
-				} else {
-					strcpy(display_name, (const char *)name_src);
-				}
-			} else {
-				strcpy(display_name, (const char *)name_src);
-			}
-
-			if (mcTitle != NULL)
-				printXY_sjis((const unsigned char *)display_name, x + 4, y, color, TRUE);
-			else
-				printXY(display_name, x + 4, y, color, TRUE, name_limit);
-				if (file_show > 0) {
+				if (mcTitle != NULL)
+					printXY_sjis(mcTitle, x + 4, y, color, TRUE);
+				else
+					printXY(tmp, x + 4, y, color, TRUE, name_limit);
+				if (fileShowDetails() && path[0] == '\0') {
+					printXY(getRootDeviceDescription(files[top + i].name),
+					        x + 4 + details_column * FONT_WIDTH, y, color, TRUE, 0);
+				} else if (fileShowDetails() && strcmp(path, setting->Misc)) {
 					//					unsigned int size = files[top+i].stats.fileSizeByte;
 					u64 size = ((u64)files[top + i].stats.Reserve2 << 32) | files[top + i].stats.FileSizeByte;
 					int scale = 0;  //0==Bytes, 1==KBytes, 2==MBytes, 3==GB
 					char scale_s[6] = " KMGTP";
+					char timestamp_text[32];
 					PS2TIME timestamp = *(PS2TIME *)&files[top + i].stats._Modify;
 
 					if (!size_valid)
@@ -1804,18 +1846,13 @@ int getFilePath(char *out, int cnfmode)
 					}
 
 					if (!time_valid || !(top + i))
-						strcat(tmp, " ----.--.-- --:--:--");
+						formatBrowserMissingTimestamp(timestamp_text, sizeof(timestamp_text), use_12h, date_format);
 					else {
-						sprintf(tmp + strlen(tmp), " %04d.%02d.%02d %02d:%02d:%02d",
-						        ((timestamp.year < 2256) ? timestamp.year : (timestamp.year - 256)),
-						        timestamp.month,
-						        timestamp.day,
-						        timestamp.hour,
-						        timestamp.min,
-						        timestamp.sec);
+						formatBrowserTimestamp(timestamp_text, sizeof(timestamp_text), &timestamp, use_12h, date_format);
 					}
+					sprintf(tmp + strlen(tmp), " %s", timestamp_text);
 
-					printXY(tmp, x + 4 + 44 * FONT_WIDTH, y, color, TRUE, 0);
+					printXY(tmp, x + 4 + details_column * FONT_WIDTH, y, color, TRUE, 0);
 				}
 				if (setting->FB_NoIcons) {  //if FileBrowser should not use icons
 					if (marks[top + i])
@@ -1829,11 +1866,11 @@ int getFilePath(char *out, int cnfmode)
 						if (genCmpFileExt(files[top + i].name, "ELF"))
 							iconcolr = COLOR_GRAPH2;
 						else if (
-									genCmpFileExt(files[top + i].name, "TXT") ||
-									genCmpFileExt(files[top + i].name, "CFG") ||
-									genCmpFileExt(files[top + i].name, "CNF") ||
-									genCmpFileExt(files[top + i].name, "INI") ||
-									genCmpFileExt(files[top + i].name, "CHT") ||
+									genCmpFileExt(files[top + i].name, "TXT") || 
+									genCmpFileExt(files[top + i].name, "CFG") || 
+									genCmpFileExt(files[top + i].name, "CNF") || 
+									genCmpFileExt(files[top + i].name, "INI") || 
+									genCmpFileExt(files[top + i].name, "CHT") || 
 									genCmpFileExt(files[top + i].name, "PBT") ||
 									genCmpFileExt(files[top + i].name, "JS") ||
 									genCmpFileExt(files[top + i].name, "LUA") ||
@@ -1856,13 +1893,19 @@ int getFilePath(char *out, int cnfmode)
 			}                             //ends for, so all browser rows were fixed above
 			if (browser_nfiles > rows) {  //if more files than available rows, use scrollbar
 				drawFrame(SCREEN_WIDTH - SCREEN_MARGIN - LINE_THICKNESS * 8, Frame_start_y,
-				          SCREEN_WIDTH - SCREEN_MARGIN, Frame_end_y, setting->color[COLOR_FRAME]);
-				y0 = (Menu_end_y - Menu_start_y + 8) * ((double)top / browser_nfiles);
-				y1 = (Menu_end_y - Menu_start_y + 8) * ((double)(top + rows) / browser_nfiles);
+				          SCREEN_WIDTH - SCREEN_MARGIN, list_end_y + 4, setting->color[COLOR_FRAME]);
+				y0 = (list_end_y - Menu_start_y + 8) * ((double)top / browser_nfiles);
+				y1 = (list_end_y - Menu_start_y + 8) * ((double)(top + rows) / browser_nfiles);
 				drawOpSprite(setting->color[COLOR_FRAME],
 				             SCREEN_WIDTH - SCREEN_MARGIN - LINE_THICKNESS * 6, (y0 + Menu_start_y - 4),
 				             SCREEN_WIDTH - SCREEN_MARGIN - LINE_THICKNESS * 2, (y1 + Menu_start_y - 4));
 			}                  //ends clause for scrollbar
+			if (path[0] == '\0') {
+				snprintf(tmp, sizeof(tmp), "MODEL: %s", device_model);
+				printXY(tmp, x + 4, list_end_y, setting->color[COLOR_TEXT], TRUE, 0);
+				printXY(device_bootrom, x + 4, list_end_y + font_height, setting->color[COLOR_TEXT], TRUE, 0);
+				printXY(device_dvdver, x + 4, list_end_y + 2 * font_height, setting->color[COLOR_TEXT], TRUE, 0);
+			}
 			if (nclipFiles) {  //if Something in clipboard, emulate LED indicator
 				u64 LED_colour, RIM_colour = GS_SETREG_RGBA(0, 0, 0, 0);
 				int RIM_w = 4, LED_w = 6, indicator_w = LED_w + 2 * RIM_w;
@@ -1936,14 +1979,7 @@ int getFilePath(char *out, int cnfmode)
 					sprintf(tmp, "[%.1fKB %s]", (double)freeSpace / 1024, LNG(free));
 				else
 					sprintf(tmp, "[%dB %s]", (int)freeSpace, LNG(free));
-				ret = strlen(tmp);
-				drawSprite(setting->color[COLOR_BACKGR],
-				           SCREEN_WIDTH - SCREEN_MARGIN - (ret + 1) * FONT_WIDTH, (Menu_message_y - 1),
-				           SCREEN_WIDTH - SCREEN_MARGIN, (Menu_message_y + FONT_HEIGHT));
-				printXY(tmp,
-				        SCREEN_WIDTH - SCREEN_MARGIN - ret * FONT_WIDTH,
-				        (Menu_message_y),
-				        setting->color[COLOR_SELECT], TRUE, 0);
+				setMenuHeaderRightStatus(tmp);
 			}
 		}  //ends if(event||post_event)
 		drawScr();
@@ -2015,6 +2051,11 @@ static void submenu_func_GetSize(char *mess, char *path, FILEINFO *files)
 
 	//----- Comment out this section to skip attributes entirely -----
 	if ((nmarks < 2) && (sel >= 0)) {
+		PS2TIME timestamp;
+		char timestamp_text[32];
+		int use_12h;
+		int date_format;
+
 		sprintf(filepath, "%s%s", path, files[sel].name);
 		//----- Start of section for debug display of attributes -----
 		/*
@@ -2041,15 +2082,10 @@ static void submenu_func_GetSize(char *mess, char *path, FILEINFO *files)
 			time->hour,time->min,time->sec,time->unknown);
 */
 		//----- End of section for debug display of attributes -----
-		sprintf(mess + text_pos, " m=%04X %04d.%02d.%02d %02d:%02d:%02d%n",
-		        files[sel].stats.AttrFile,
-		        files[sel].stats._Modify.Year,
-		        files[sel].stats._Modify.Month,
-		        files[sel].stats._Modify.Day,
-		        files[sel].stats._Modify.Hour,
-		        files[sel].stats._Modify.Min,
-		        files[sel].stats._Modify.Sec,
-		        &text_inc);
+		timestamp = *(PS2TIME *)&files[sel].stats._Modify;
+		menuTitleGetClockFormat(&use_12h, &date_format);
+		formatBrowserTimestamp(timestamp_text, sizeof(timestamp_text), &timestamp, use_12h, date_format);
+		sprintf(mess + text_pos, " m=%04X %s%n", files[sel].stats.AttrFile, timestamp_text, &text_inc);
 		text_pos += text_inc;
 		if (!strncmp(path, "mc", 2)) {
 			mcGetInfo(path[2] - '0', 0, &mctype_PSx, NULL, NULL);
