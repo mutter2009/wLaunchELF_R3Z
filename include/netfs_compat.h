@@ -36,6 +36,15 @@ extern int netfs_net_inited;
  * NFS.CNF. Idempotent. Returns 0 on success. */
 int init_netfs(void);
 
+/* Re-establish SMB2/NFS mounts after the config changed: tear down the
+ * existing mounts and re-read SMB.CNF / NFS.CNF, re-mounting the shares.
+ * The EE network stack (netman/ps2ip) is left up. Returns 0 on success,
+ * -1 if the link never came up. */
+int netfs_reconnect(void);
+
+/* Returns 1 if SMB.CNF carries AUTO=1 (connect at startup), else 0. */
+int netfs_autostart_enabled(void);
+
 #endif /* NETFS_COMPAT_H */
 //---------------------------------------------------------------------------
 //End of file: netfs_compat.h

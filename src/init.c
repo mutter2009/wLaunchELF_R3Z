@@ -502,6 +502,20 @@ int init_netfs(void)
 	init_nfs(ip, netmask, gw);
 	return 0;
 }
+
+int netfs_reconnect(void)
+{
+	/* Drop existing SMB2/NFS mounts, then re-read SMB.CNF / NFS.CNF and
+	 * re-mount the shares. The EE network stack (netman/ps2ip) is left up,
+	 * so init_smb2()/init_nfs() skip re-initialising it. */
+	extern void deinit_smb2(void);
+	extern void deinit_nfs(void);
+	deinit_smb2();
+	deinit_nfs();
+	init_smb2(ip, netmask, gw);
+	init_nfs(ip, netmask, gw);
+	return 0;
+}
 #endif
 //---------------------------------------------------------------------------
 static int load_ps2hdd_stack(int with_ata_bd)

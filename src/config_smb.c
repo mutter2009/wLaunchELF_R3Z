@@ -6,6 +6,9 @@
 // loadSMB2CNF() 在启动时读取并挂载共享。
 //---------------------------------------------------------------------------
 #include "config_private.h"
+#ifdef NETFS
+#include "netfs_compat.h"
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,7 +28,7 @@ static const char SMB_CHARSET[] =
 //---------------------------------------------------------------------------
 // 读取已有 SMB.CNF（首个共享）到缓冲区；找不到则留空
 //---------------------------------------------------------------------------
-static void loadSMBConfig(char *name, char *url, char *user, char *pass)
+static void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_connect)
 {
 	char *ram, *p, *k, *v;
 	const char *paths[3] = {
@@ -38,6 +41,7 @@ static void loadSMBConfig(char *name, char *url, char *user, char *pass)
 	url[0] = '\0';
 	user[0] = '\0';
 	pass[0] = '\0';
+	*auto_connect = 0;
 
 	for (i = 0; i < 3; i++) {
 		ram = preloadCNF((char *)paths[i]);
@@ -57,6 +61,8 @@ static void loadSMBConfig(char *name, char *url, char *user, char *pass)
 			strncpy(user, v, SMB_USER_MAX - 1);
 		else if (!strcmp(k, "PASSWORD") && pass[0] == '\0')
 			strncpy(pass, v, SMB_PASS_MAX - 1);
+		else if (!strcmp(k, "AUTO") && *auto_connect == 0)
+			*auto_connect = (strcmp(v, "1") == 0);
 	}
 	name[SMB_NAME_MAX - 1] = '\0';
 	url[SMB_URL_MAX - 1] = '\0';
@@ -70,7 +76,7 @@ static void loadSMBConfig(char *name, char *url, char *user, char *pass)
 //---------------------------------------------------------------------------
 static void saveSMBConfig(char *Message, const char *target_path,
                           const char *name, const char *url,
-                          const char *user, const char *pass)
+                          const char *user, const char *pass, int auto_connect)
 {
 	char path[MAX_PATH];
 	int fd, ret = 0;
@@ -96,6 +102,9 @@ static void saveSMBConfig(char *Message, const char *target_path,
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
 		sprintf(line, "URL=%s\r\n", url);
+		genWrite(fd, line, strlen(line));
+		mcSync(0, NULL, &ret);
+		sprintf(line, "AUTO=%d\r\n", auto_connect);
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
 		genClose(fd);
@@ -218,6 +227,10 @@ enum CONFIG_SMB {
 	CONFIG_SMB_PASS,
 	CONFIG_SMB_AFT_FIELDS,
 	CONFIG_SMB_SAVE = CONFIG_SMB_AFT_FIELDS,
+#ifdef NETFS
+	CONFIG_SMB_AUTO,
+	CONFIG_SMB_RECONNECT,
+#endif
 	CONFIG_SMB_RETURN,
 	CONFIG_SMB_COUNT
 };
@@ -229,6 +242,7 @@ void Config_SMB(void)
 	int x, y, len;
 	char c[MAX_PATH];
 	char name[SMB_NAME_MAX], url[SMB_URL_MAX], user[SMB_USER_MAX], pass[SMB_PASS_MAX];
+	int auto_connect = 0;
 	char msg[MAX_PATH];
 	char save_override_path[MAX_PATH];
 	char save_cwd_path[MAX_PATH];
@@ -243,7 +257,7 @@ void Config_SMB(void)
 	post_event = 0;
 	s = CONFIG_SMB_FIRST;
 
-	loadSMBConfig(name, url, user, pass);
+	loadSMBConfig(name, url, user, pass, &auto_connect);
 	configBuildSaveTargets(save_override_path, sizeof(save_override_path),
 	                       save_cwd_path, sizeof(save_cwd_path),
 	                       save_sysconf_path, sizeof(save_sysconf_path),
@@ -307,9 +321,21 @@ void Config_SMB(void)
 							save_path = save_sysconf_path;
 						configRefreshSaveTargetForWrite(save_target, save_path, MAX_PATH,
 						                               "SMB.CNF", loaded_path);
-						saveSMBConfig(msg, save_path, name, url, user, pass);
+						saveSMBConfig(msg, save_path, name, url, user, pass, auto_connect);
 					}
-				} else  //s == CONFIG_SMB_RETURN
+				}
+#ifdef NETFS
+					else if (s == CONFIG_SMB_AUTO) {
+						auto_connect = auto_connect ? 0 : 1;
+					} else if (s == CONFIG_SMB_RECONNECT) {
+						int rc = netfs_reconnect();
+						if (rc == 0)
+							snprintf(msg, sizeof(msg), "%s", LNG(SMB_Connected));
+						else
+							snprintf(msg, sizeof(msg), "%s", LNG(SMB_ConnectFailed));
+					}
+#endif
+					else  //s == CONFIG_SMB_RETURN
 					return;
 			} else if ((swapKeys && new_pad & PAD_CROSS) || (!swapKeys && new_pad & PAD_CIRCLE)) {
 				event |= 2;
@@ -367,6 +393,16 @@ void Config_SMB(void)
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
+#ifdef NETFS
+			configFormatLabelValue(c, sizeof(c), LNG(SMB_AutoConnect), auto_connect ? LNG(SMB_On) : LNG(SMB_Off));
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+
+			configFormatLabelValue(c, sizeof(c), LNG(SMB_Reconnect), ">");
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+#endif
+
 			sprintf(c, "  %s", LNG(RETURN));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
@@ -412,5 +448,42 @@ void Config_SMB(void)
 	}
 }
 //---------------------------------------------------------------------------
+
+#ifdef NETFS
+//---------------------------------------------------------------------------
+// Reads SMB.CNF (first match among mc0:/mc1:/mass:) and returns 1 if it
+// carries AUTO=1, meaning the user wants SMB mounted automatically at
+// startup. Used by main.c before the main menu loop.
+//---------------------------------------------------------------------------
+int netfs_autostart_enabled(void)
+{
+	char *ram, *p, *k, *v;
+	const char *paths[3] = {
+	    "mc0:/SYS-CONF/SMB.CNF",
+	    "mc1:/SYS-CONF/SMB.CNF",
+	    "mass:/SYS-CONF/SMB.CNF"};
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		ram = preloadCNF((char *)paths[i]);
+		if (ram)
+			break;
+	}
+	if (!ram)
+		return 0;
+	p = ram;
+	while (get_CNF_string(&p, &k, &v)) {
+		if (!strcmp(k, "AUTO") && !strcmp(v, "1")) {
+			free(ram);
+			return 1;
+		}
+	}
+	free(ram);
+	return 0;
+}
+#endif
+//---------------------------------------------------------------------------
 // End of file: config_smb.c
+//---------------------------------------------------------------------------
+
 //---------------------------------------------------------------------------
