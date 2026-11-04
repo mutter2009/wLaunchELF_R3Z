@@ -14,7 +14,7 @@
 #define ULE_VERSION_DEBUG_SUFFIX ""
 #endif
 
-#define ULE_VERSION "v4.76_R3Z" ULE_VERSION_DEBUG_SUFFIX
+#define ULE_VERSION "v4.8" ULE_VERSION_DEBUG_SUFFIX
 //#ifndef ULE_VERDATE
 //#define ULE_VERDATE __DATE__
 //#endif
@@ -284,6 +284,7 @@ typedef struct
 	char lang_file[MAX_PATH];
 	char font_file[MAX_PATH];
 	char popstarter_file[MAX_PATH];
+	char neutrino_file[MAX_PATH];
 	int Menu_Frame;
 	int timeout;
 	int Hide_Paths;
@@ -302,6 +303,9 @@ typedef struct
 	int reboot_iop_elf_load;
 	int virtual_keyboard_layout;
 	int Hide_Hdd;
+	int disable_ember;
+	int disable_popstarter;
+	int disable_neutrino;
 	int Hide_MCMMCE;
 	int Show_Titles;
 	int PathPad_Lock;
@@ -368,6 +372,7 @@ int uLE_related(char *pathout, const char *pathin);
 int wleExists(const char *path);
 int IsTextEditorFileType(const char *path);
 void getIpConfig(void);
+void updateIpConfigRuntimeState(void);
 int readSystemCnf(void);
 int uLE_InitializeRegion(void);
 int uLE_cdDiscValid(void);
@@ -390,6 +395,9 @@ int loadAtaModules(void);
 /* elf.c */
 int checkELFheader(char *filename);
 void RunLoaderElf(char *filename, char *party, const char *selected_path, int exec_kind, int reboot_iop_elf_load);
+void RunLoaderElfWithArgs(char *filename, char *party, int app_argc, char *app_argv[], int reboot_iop_elf_load);
+void RunLoaderElfWithArg0(char *filename, char *party, const char *selected_path,
+                          const char *arg0_path, int exec_kind, int reboot_iop_elf_load);
 void RunLoaderMemory(const char *arg0, const char *mem_arg, int reboot_iop);
 void LaunchArgsClear(void);
 int LaunchArgsPending(void);
@@ -405,6 +413,12 @@ int PrepareMbrLaunchPayload(const char *path, char *mem_arg, size_t mem_arg_size
 /* popstarter.c */
 int IsPopstarterVcdPath(const char *path);
 int LaunchPopstarterVcd(const char *path, char *message, size_t message_size);
+
+/* ember.c */
+int IsEmberDiscImagePath(const char *path);
+int BuildEmberArg0Path(const char *ember_path, char *arg0_path, size_t arg0_path_size);
+int PrepareEmberLaunch(const char *image_path, char *ember_path, size_t ember_path_size,
+                       char *game_arg, size_t game_arg_size, char *message, size_t message_size);
 
 /* draw.c */
 #define FOLDER 0
@@ -428,6 +442,7 @@ extern int Menu_tooltip_y;
 extern u8 FontBuffer[256 * 16];
 
 void setScrTmp(const char *msg0, const char *msg1);
+void setMenuHeaderRightStatus(const char *status);
 void drawSprite(u64 color, int x1, int y1, int x2, int y2);
 void drawPopSprite(u64 color, int x1, int y1, int x2, int y2);
 void drawOpSprite(u64 color, int x1, int y1, int x2, int y2);
@@ -497,7 +512,7 @@ char *preloadCNF(char *path);          //loads file into RAM it allocates
 typedef struct
 {
 	char name[MAX_NAME];
-	unsigned char title[32 * 2 + 1];
+	unsigned char title[32 * 2 + 2];  //SJIS title, optional line separator, and terminator
 	sceMcTblGetDir stats;
 } FILEINFO;
 
@@ -526,6 +541,7 @@ void genLimObjName(char *uLE_path, int reserve);
 int genFixPath(const char *inp_path, char *gen_path);
 /* mode must use fileXio-compatible flags (FIO_O_*). */
 int genOpen(const char *path, int mode);
+int openPathForRead(const char *path, char *opened_path, size_t opened_path_size);
 s64 genLseek(int fd, s64 where, int how);
 int genRead(int fd, void *buf, int size);
 int genWrite(int fd, void *buf, int size);
@@ -587,6 +603,8 @@ enum BuiltinLanguage {
 	BUILTIN_LANGUAGE_COUNT
 };
 
+extern int g_useUTF8;  // 1 = 当前语言为简体中文 (UTF-8)，由 lang.c 维护
+
 enum {
 #define lang(id, name, value) LANG_##name,
 #include "lang.h"
@@ -600,7 +618,6 @@ enum {
 extern Language Lang_String[];
 extern Language Lang_Default[];
 extern void *External_Lang_Buffer;
-extern int g_useUTF8;  // 1 = 当前语言为简体中文 (UTF-8)，由 lang.c 维护
 
 int normalizeVirtualKeyboardLayout(int layout);
 const char *getVirtualKeyboardLayoutConfigName(int layout);
