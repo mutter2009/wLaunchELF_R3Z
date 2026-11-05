@@ -1,0 +1,20 @@
+# Force LF on checkout. CI runs in a Linux (Alpine) container and breaks on
+# CRLF: a "#!/bin/sh\r" shebang makes `env` look for "sh\r", and a trailing \r
+# on Makefile recipe lines gets parsed as part of a filename.
+# This also self-heals files that were uploaded with Windows CRLF line endings.
+* text=auto eol=lf
+
+# Shell scripts are executed directly; their shebang must be exact.
+*.sh text eol=lf
+
+# Build scripts / metadata that must never be CRLF-mangled.
+*.py text eol=lf
+Makefile text eol=lf
+*.mk text eol=lf
+
+# Binary assets must be left byte-for-byte.
+*.irx binary
+*.png binary
+*.jpg binary
+*.gz binary
+*.zip binary
