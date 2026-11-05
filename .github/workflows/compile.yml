@@ -96,6 +96,11 @@ jobs:
         echo "PS2SDK=$PS2SDK"
         git clone --depth 1 https://github.com/sahlberg/libnfs.git "${RUNNER_TEMP:-/tmp}/libnfs"
         cd "${RUNNER_TEMP:-/tmp}/libnfs/ps2_ee"
+        # libnfs' PS2 port ships its DNS/hostname shims in ps2_ee/ps2_compat.c,
+        # but the stock Makefile.PS2_EE forgets to compile/link ps2_compat.o, so
+        # nfs_getaddrinfo / nfs_freeaddrinfo are left undefined. Patch them in.
+        awk ' /\.\.\/nfs\/nfsacl\.o/ { print; print "EE_OBJS += ../ps2_ee/ps2_compat.o"; next } { print } ' Makefile.PS2_EE > Makefile.PS2_EE.tmp && mv Makefile.PS2_EE.tmp Makefile.PS2_EE
+        grep -n "ps2_compat.o" Makefile.PS2_EE || echo "WARN: ps2_compat.o not patched"
         make -f Makefile.PS2_EE install
         # Also expose libnfs via the ports/ paths that wLaunchELF adds to its
         # own build flags, so #include <nfsc/libnfs.h> and -lnfs always resolve.
