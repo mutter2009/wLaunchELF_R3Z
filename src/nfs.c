@@ -425,13 +425,13 @@ int NFSclose(struct NFSFH *fh)
 int NFSread(struct NFSFH *fh, char *buf, int size)
 {
         LOG("NFSread\n");
-        return nfs_read(fh->nfs, fh->fh, size, buf);
+        return nfs_read(fh->nfs, fh->fh, buf, size);
 }
 
 int NFSwrite(struct NFSFH *fh, char *buf, int size)
 {
         LOG("NFSwrite\n");
-        return nfs_write(fh->nfs, fh->fh, size, buf);
+        return nfs_write(fh->nfs, fh->fh, buf, size);
 }
 
 int NFSlseek(struct NFSFH *fh, int where, int how)
