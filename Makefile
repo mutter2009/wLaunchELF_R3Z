@@ -177,7 +177,7 @@ ifeq ($(ETH),1)
     EE_OBJS += ps2smap_irx.o ps2ftpd_irx.o ps2host_irx.o ps2netfs_irx.o ps2ip_irx.o
     EE_CFLAGS += -DETH
 ifeq ($(NETFS),1)
-    EE_OBJS += smb2.o nfs.o netman_irx.o
+    EE_OBJS += smb2.o nfs.o netman_irx.o netfs_shim.o
     EE_CFLAGS += -DNETFS
     EE_LIBS += -lsmb2 -lnfs -lps2ip -lnetman
     HAS_ETH = -ETH
