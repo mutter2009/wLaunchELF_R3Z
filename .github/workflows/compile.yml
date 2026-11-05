@@ -5,9 +5,6 @@ on:
     inputs:
       make_args:
         description: pass extra make argumments to control features not explicitly handled by CI
-  push:
-  repository_dispatch:
-    types: [run_build]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -74,6 +71,25 @@ jobs:
         ps2sdk_src_dir="${RUNNER_TEMP:-/tmp}/ps2sdk-src"
         git clone --depth 1 https://github.com/ps2dev/ps2sdk.git "$ps2sdk_src_dir"
         echo "PS2SDKSRC=$ps2sdk_src_dir" >> "$GITHUB_ENV"
+    - name: Normalize line endings (strip CR)
+      run: |
+        # CI runs in Alpine/BusyBox. A stray CR (Windows CRLF) breaks shell scripts:
+        # a "#!/bin/sh\r" shebang makes `env` look for "sh\r", and a trailing \r on
+        # any line is parsed as part of the command (e.g. `set -\r`, `case ... in\r`).
+        # Git's .gitattributes eol=lf is the primary guard, but a hand-uploaded CRLF
+        # file can defeat it, so we also strip CR here at build time. `tr` reads from
+        # stdin (it never takes a filename argument), so we loop per file via a temp
+        # file. \r is the POSIX-named carriage-return escape recognized by BusyBox tr.
+        find . -type f \( \
+          -name '*.sh' -o -name 'Makefile' -o -name '*.c' -o -name '*.h' -o \
+          -name '*.mk' -o -name '*.yml' -o -name '*.yaml' -o -name '*.LNG' -o \
+          -name '*.s' -o -name '*.S' -o -name '*.asm' -o -name '*.inc' -o \
+          -name '*.ld' -o -name '*.txt' -o -name '*.md' -o -name '*.cfg' -o \
+          -name '*.cnf' -o -name '*.conf' -o -name '*.ini' -o -name '*.ee' -o \
+          -name '*.iop' -o -name '*.cmake' -o -name '.clang-format' -o \
+          -name '.clang-tidy' -o -name '.gitignore' \
+        \) -exec sh -c 'for f in "$@"; do tr -d "\r" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done' _ {} +
+
     - name: Install libnfs (PS2 EE) — required by the NETFS build
       if: matrix.netfs == '1'
       run: |
