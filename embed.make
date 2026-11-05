@@ -678,6 +678,18 @@ $(EE_ASM_DIR)ps2ftpd_irx.s: iop/ps2ftpd.irx | $(EE_ASM_DIR)
 $(EE_ASM_DIR)ps2netfs_irx.s: $(PS2SDK)/iop/irx/ps2netfs.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2netfs_irx
 
+# NETFS additionally embeds the network manager IOP module (needed by the
+# EE-side -lnetman API and by libsmb2/libnfs). netman ships with the base
+# PS2SDK at iop/irx/netman.irx, alongside ps2ip.irx above.
+ifeq ($(NETFS),1)
+NETMAN_SOURCE := $(PS2SDK)/iop/irx/netman.irx
+ifeq ($(wildcard $(NETMAN_SOURCE)),)
+$(error Missing $(NETMAN_SOURCE). netman.irx is required for NETFS; update the PS2SDK/toolchain container)
+endif
+$(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ netman_irx
+endif
+
 $(EE_ASM_DIR)ps2host_irx.s: iop/ps2host.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2host_irx
 endif
