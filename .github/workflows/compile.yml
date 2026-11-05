@@ -88,7 +88,22 @@ jobs:
           -name '*.cnf' -o -name '*.conf' -o -name '*.ini' -o -name '*.ee' -o \
           -name '*.iop' -o -name '*.cmake' -o -name '.clang-format' -o \
           -name '.clang-tidy' -o -name '.gitignore' \
-        \) -exec sh -c 'for f in "$@"; do tr -d "\r" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done' _ {} +
+        \) -exec tr -d '\r' {} +
+
+    - name: Install libnfs (PS2 EE) — required by the NETFS build
+      if: matrix.netfs == '1'
+      run: |
+        echo "PS2SDK=$PS2SDK"
+        git clone --depth 1 https://github.com/sahlberg/libnfs.git "${RUNNER_TEMP:-/tmp}/libnfs"
+        cd "${RUNNER_TEMP:-/tmp}/libnfs/ps2_ee"
+        make -f Makefile.PS2_EE install
+        # Also expose libnfs via the ports/ paths that wLaunchELF adds to its
+        # own build flags, so #include <nfsc/libnfs.h> and -lnfs always resolve.
+        mkdir -p "$PS2SDK/ports/include/nfsc" "$PS2SDK/ports/lib"
+        cp -fr "$PS2SDK/ee/include/nfsc" "$PS2SDK/ports/include/"
+        cp -f "$PS2SDK/ee/lib/libnfs.a" "$PS2SDK/ports/lib/"
+        echo "libnfs install check:"
+        ls -l "$PS2SDK/ports/include/nfsc/libnfs.h" "$PS2SDK/ports/lib/libnfs.a"
 
     - name: Ensure scripts are executable
       run: |
