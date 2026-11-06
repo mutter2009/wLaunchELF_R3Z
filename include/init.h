@@ -18,7 +18,6 @@ void ensureCoreIoStackReady(void);
 void ensureMemoryCardPortAccessible(int port);
 void rebootIopAndReloadCoreStack(void);
 void rebootIopAndReloadCoreStackSilent(void);
-int rebootIopAndLoadDeviceStackForPath(const char *path);
 int loadSecrSifModule(void);
 int prepareExploitSignerIop(void);
 
