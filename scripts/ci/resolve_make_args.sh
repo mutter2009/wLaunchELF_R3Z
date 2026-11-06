@@ -4,7 +4,7 @@ set -eu
 # Resolve high-level CI build profile selectors into concrete make flags.
 #
 # Usage:
-#   resolve_make_args.sh <psx_profile> <pad_profile> <storage_profile> [debug] [ppc_uart] [netfs]
+#   resolve_make_args.sh <psx_profile> <pad_profile> <storage_profile> [debug] [ppc_uart]
 #
 # Profiles:
 #   psx_profile:     no-psx | psx
@@ -14,14 +14,12 @@ set -eu
 # Optional:
 #   debug:    0|1 (default 0)
 #   ppc_uart: 0|1 (default 0)
-#   netfs:    0|1 (default 0) — adds SMB2/3 + NFS network file browser (SMB:/nfs:)
 
 PSX_PROFILE="${1:-no-psx}"
 PAD_PROFILE="${2:-no-ds34}"
 STORAGE_PROFILE="${3:-all}"
 DEBUG_FLAG="${4:-0}"
 PPC_UART_FLAG="${5:-0}"
-NETFS_FLAG="${6:-0}"
 
 # Shared defaults.
 # CI artifacts use the UDPFS network stack (not ETH/netfs+host).
@@ -106,11 +104,5 @@ if [ "$MMCE" = "1" ] && [ "$EXFAT" != "1" ]; then
 	exit 1
 fi
 
-# NETFS (SMB2/3 + NFS) rides on the ETH network stack.
-NETFS="${NETFS_FLAG}"
-if [ "$NETFS" = "1" ]; then
-	ETH=1
-fi
-
 printf '%s\n' \
-	"ETH=$ETH UDPFS=$UDPFS EXFAT=$EXFAT MMCE=$MMCE MX4SIO=$MX4SIO LCDVD=$LCDVD DVRP=$DVRP XFROM=$XFROM DS34=$DS34 DEBUG=$DEBUG_FLAG PPC_UART=$PPC_UART_FLAG NETFS=$NETFS"
+	"ETH=$ETH UDPFS=$UDPFS EXFAT=$EXFAT MMCE=$MMCE MX4SIO=$MX4SIO LCDVD=$LCDVD DVRP=$DVRP XFROM=$XFROM DS34=$DS34 DEBUG=$DEBUG_FLAG PPC_UART=$PPC_UART_FLAG"

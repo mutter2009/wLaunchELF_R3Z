@@ -60,14 +60,12 @@ enum BOOT_DEVICE performEarlyBootInitialization(const char *arg0, char *boot_pat
 	snprintf(cnf_path_buf, cnf_path_buf_len, "%s", "LAUNCHELF.CNF");
 	local_cnf_error = loadConfig(main_msg, cnf_path_buf);
 	if (local_cnf_error < 0) {
-		/* No config loaded: default pad mapping from ROM region.
-		 * ROMVER_data[4] is the region letter.
-		 * J/C => Circle=OK/FileBrowser, Cross=Cancel (swapKeys=FALSE)
-		 * others => Cross=OK/FileBrowser, Circle=Cancel (swapKeys=TRUE)
+		/* No config loaded: default to Circle=OK/FileBrowser, Cross=Cancel.
+		 * Force swapKeys=FALSE for Asian input convention regardless of ROM region.
 		 */
 		if (ROMVER_data[0] == '\0')
 			uLE_InitializeRegion();
-		setting->swapKeys = ((ROMVER_data[4] == 'J') || (ROMVER_data[4] == 'C')) ? FALSE : TRUE;
+		setting->swapKeys = FALSE;
 		mapDefaultFileBrowserLaunchKeyToOkButton();
 	}
 	bringUpBootNetworkStack(boot);

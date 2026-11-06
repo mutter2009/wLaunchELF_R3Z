@@ -13,7 +13,6 @@ extern char rough_region;
 
 static unsigned short ROMVersion;
 static int hide_hdd_ata_devices = -1;
-static int ip_config_cached = FALSE;
 
 static void normalizeBootPath(char *path);
 static int isSlashRootedBootPathDevice(const char *path);
@@ -25,28 +24,6 @@ static int isBootXfromPath(const char *path);
 static void initializeBootExecPath(void);
 static void buildBootBlockPath(char *dst, size_t dst_size, const char *prefix, const char *partition, const char *path_part);
 static int getRomverPrefixNumber(void);
-
-static void refreshIpConfigRuntimeState(void)
-{
-	int i;
-
-	memset(if_conf, 0, IPCONF_MAX_LEN);
-	i = 0;
-	memcpy(if_conf + i, ip, strlen(ip) + 1);
-	i += strlen(ip) + 1;
-	memcpy(if_conf + i, netmask, strlen(netmask) + 1);
-	i += strlen(netmask) + 1;
-	memcpy(if_conf + i, gw, strlen(gw) + 1);
-	i += strlen(gw) + 1;
-	if_conf_len = i;
-	snprintf(netConfig, sizeof(netConfig), "%s:  %-15s %-15s %-15s", LNG(Net_Config), ip, netmask, gw);
-}
-
-void updateIpConfigRuntimeState(void)
-{
-	ip_config_cached = TRUE;
-	refreshIpConfigRuntimeState();
-}
 
 // Parse network configuration from IPCONFIG.DAT
 // Now completely rewritten to fix some problems
@@ -65,11 +42,6 @@ void getIpConfig(void)
 	char loaded_path[MAX_PATH];
 	size_t dir_len;
 	static const char ipconfig_name[] = "IPCONFIG.DAT";
-
-	if (ip_config_cached) {
-		refreshIpConfigRuntimeState();
-		return;
-	}
 
 	fd = -1;
 	len = 0;
@@ -125,7 +97,16 @@ void getIpConfig(void)
 		snprintf(gw, sizeof(gw), "%.15s", buf + i);
 	}
 
-	updateIpConfigRuntimeState();
+	memset(if_conf, 0, IPCONF_MAX_LEN);
+	i = 0;
+	memcpy(if_conf + i, ip, strlen(ip) + 1);
+	i += strlen(ip) + 1;
+	memcpy(if_conf + i, netmask, strlen(netmask) + 1);
+	i += strlen(netmask) + 1;
+	memcpy(if_conf + i, gw, strlen(gw) + 1);
+	i += strlen(gw) + 1;
+	if_conf_len = i;
+	snprintf(netConfig, sizeof(netConfig), "%s:  %-15s %-15s %-15s", LNG(Net_Config), ip, netmask, gw);
 }
 
 //scanSystemCnf will check for a standard variable of a SYSTEM.CNF file
@@ -570,9 +551,6 @@ void bringUpBootDeviceStack(enum BOOT_DEVICE boot_device)
 			if (isBootUsbMassPath(LaunchElfDir)) {
 				DPRINTF("Loading USB modules for boot\n");
 				loadUsbModules();
-				/* The IOP reset disconnects the boot device.  Wait for it to
-				 * enumerate before loading files beside the launched ELF. */
-				prepareUsbRootBrowse();
 			}
 			break;
 #ifdef MMCE

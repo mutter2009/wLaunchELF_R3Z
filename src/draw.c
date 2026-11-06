@@ -17,11 +17,6 @@ u64 updateScr_t = 0;  //dlanor: exit time of last drawScr()
 
 char LastMessage[MAX_TEXT_LINE + 2];
 static int menu_title_refresh_frames = 0;
-static char menu_title_right_status[MAX_TEXT_LINE + 1];
-static int menu_title_right_status_width = 0;
-
-/* Match the file browser time/date field immediately before its scrollbar. */
-#define MENU_TITLE_CLOCK_RIGHT_X (SCREEN_WIDTH - SCREEN_MARGIN - LINE_THICKNESS * 8 - 1)
 
 int Menu_start_x = SCREEN_MARGIN + LINE_THICKNESS + FONT_WIDTH;
 int Menu_title_y = SCREEN_MARGIN;
@@ -34,66 +29,39 @@ int Menu_end_y;      //Normal menu display should not use pixels at this line or
 int Frame_end_y;     //first line of frame bottom
 int Menu_tooltip_y;  //Menus may also use this row for tooltips
 
+
 //--------------------------------------------------------------
-static void drawMenuTitleRightStatus(void)
+static int getMenuTitleCharLimit(const char *version_text)
 {
-	char temp_title[8];
-	int status_width, clear_width, x;
+	int title_chars;
 
-	if (setting == NULL)
-		return;
+	title_chars = (SCREEN_WIDTH - (SCREEN_MARGIN * 2) - (FONT_WIDTH * ((int)strlen(version_text) + 1))) / FONT_WIDTH;
+	if (title_chars < 0)
+		title_chars = 0;
+	if (title_chars > MAX_TEXT_LINE)
+		title_chars = MAX_TEXT_LINE;
 
-	menuTitleFormatTemperature(temp_title, sizeof(temp_title));
-	status_width = strlen(menu_title_right_status);
-	if (temp_title[0] != '\0')
-		status_width += strlen(temp_title) + (status_width > 0 ? 1 : 0);
-
-	clear_width = menu_title_right_status_width;
-	if (status_width > clear_width)
-		clear_width = status_width;
-	if (clear_width > 0)
-		drawSprite(setting->color[COLOR_BACKGR],
-		           MENU_TITLE_CLOCK_RIGHT_X - (clear_width + 1) * FONT_WIDTH,
-		           Menu_message_y - 1,
-		           MENU_TITLE_CLOCK_RIGHT_X, Menu_message_y + FONT_HEIGHT);
-
-	x = MENU_TITLE_CLOCK_RIGHT_X - status_width * FONT_WIDTH;
-	if (menu_title_right_status[0] != '\0') {
-		printXY(menu_title_right_status, x, Menu_message_y,
-		        setting->color[COLOR_SELECT], TRUE, 0);
-		x += strlen(menu_title_right_status) * FONT_WIDTH;
-		if (temp_title[0] != '\0')
-			x += FONT_WIDTH;
-	}
-	if (temp_title[0] != '\0')
-		printXY(temp_title, x, Menu_message_y, setting->color[COLOR_TEXT], TRUE, 0);
-
-	menu_title_right_status_width = status_width;
+	return title_chars;
 }
-
 //--------------------------------------------------------------
 static void drawMenuTitleLine(void)
 {
 	int x, y;
 	char app_title[64];
-	char clock_title[32];
+	char status_title[MAX_TEXT_LINE + 1];
 
 	if (setting == NULL)
 		return;
 
 	x = SCREEN_MARGIN;
 	y = Menu_title_y;
-	sprintf(app_title, "\xff\x34 wLaunchELF %s \xff\x34", ULE_VERSION);
+	sprintf(app_title, "\xff\x34 wLaunchELF %s A9VG汉化版 \xff\x34", ULE_VERSION);
 
 	drawSprite(setting->color[COLOR_BACKGR], 0, Menu_title_y - 1, SCREEN_WIDTH, Menu_message_y - 1);
 	printXY(app_title, x, y, setting->color[COLOR_FRAME], TRUE, 0);
-
-	menuTitleFormatClock(clock_title, sizeof(clock_title));
-	if (clock_title[0] != '\0')
-		printXY(clock_title,
-		        MENU_TITLE_CLOCK_RIGHT_X - FONT_WIDTH * strlen(clock_title),
-		        y, setting->color[COLOR_TEXT], TRUE, 0);
-	drawMenuTitleRightStatus();
+	menuTitleFormat(status_title, getMenuTitleCharLimit(app_title) + 1);
+	printXY(status_title, SCREEN_WIDTH - SCREEN_MARGIN - FONT_WIDTH * strlen(status_title), y,
+	        setting->color[COLOR_TEXT], TRUE, 0);
 }
 //--------------------------------------------------------------
 static void updateDynamicMenuTitleLine(void)
@@ -112,28 +80,17 @@ void setScrTmp(const char *msg0, const char *msg1)
 	int x;
 
 	x = SCREEN_MARGIN;
-	menu_title_right_status[0] = '\0';
 	drawMenuTitleLine();
 
 	strncpy(LastMessage, msg0, MAX_TEXT_LINE);
 	LastMessage[MAX_TEXT_LINE] = '\0';
 	printXY(msg0, x, Menu_message_y, setting->color[COLOR_SELECT], TRUE, 0);
-	drawMenuTitleRightStatus();
 
 	if (setting->Menu_Frame)
 		drawFrame(SCREEN_MARGIN, Frame_start_y,
 		          SCREEN_WIDTH - SCREEN_MARGIN, Frame_end_y, setting->color[COLOR_FRAME]);
 
 	printXY(msg1, x, Menu_tooltip_y, setting->color[COLOR_SELECT], TRUE, 0);
-}
-//--------------------------------------------------------------
-void setMenuHeaderRightStatus(const char *status)
-{
-	if (status == NULL)
-		menu_title_right_status[0] = '\0';
-	else
-		snprintf(menu_title_right_status, sizeof(menu_title_right_status), "%s", status);
-	drawMenuTitleRightStatus();
 }
 //--------------------------------------------------------------
 void drawSprite(u64 color, int x1, int y1, int x2, int y2)
@@ -159,13 +116,11 @@ void drawOpSprite(u64 color, int x1, int y1, int x2, int y2)
 //--------------------------------------------------------------
 void drawMsg(const char *msg)
 {
-	menu_title_right_status[0] = '\0';
 	strncpy(LastMessage, msg, MAX_TEXT_LINE);
 	LastMessage[MAX_TEXT_LINE] = '\0';
 	drawSprite(setting->color[COLOR_BACKGR], 0, Menu_message_y - 1,
 	           SCREEN_WIDTH, Frame_start_y);
 	printXY(msg, SCREEN_MARGIN, Menu_message_y, setting->color[COLOR_SELECT], TRUE, 0);
-	drawMenuTitleRightStatus();
 	drawScr();
 }
 //--------------------------------------------------------------
@@ -174,7 +129,6 @@ void drawLastMsg(void)
 	drawSprite(setting->color[COLOR_BACKGR], 0, Menu_message_y - 1,
 	           SCREEN_WIDTH, Frame_start_y);
 	printXY(LastMessage, SCREEN_MARGIN, Menu_message_y, setting->color[COLOR_SELECT], TRUE, 0);
-	drawMenuTitleRightStatus();
 	drawScr();
 }
 //--------------------------------------------------------------
@@ -296,8 +250,8 @@ int	WriteFont_C(char *path_arg)
 		else //(i > 0x0FF)
 			sprintf(char_info, "//char 0x%03X == special for uLE", i);
 		sprintf(text+strlen(text),
-			"	0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, %s\r\n"
-			"	0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X"
+			" 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, %s\r\n"
+			" 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X"
 			, p[0],p[1], p[2],p[3], p[4],p[5], p[6],p[7], char_info
 			, p[8],p[9], p[10],p[11], p[12],p[13], p[14],p[15]
 		);

@@ -24,14 +24,14 @@ int cmpFile(FILEINFO *a, FILEINFO *b)
 				return 1;
 		}
 		if (file_sort == 3) {
-			t = fileShowTitles();
+			t = (file_show == 2);
 			if (time_valid) {
 				u64 time_a = *(u64 *)&a->stats._Modify;
 				u64 time_b = *(u64 *)&b->stats._Modify;
 				if (time_a > time_b)
-					return file_sort_descending ? -1 : 1;
+					return -1;
 				if (time_a < time_b)
-					return file_sort_descending ? 1 : -1;
+					return 1;
 			}
 		}
 		if (t) {
@@ -60,7 +60,7 @@ int cmpFile(FILEINFO *a, FILEINFO *b)
 			}
 			ret = ca - cb;
 			if (ret != 0)
-				return file_sort_descending ? -ret : ret;
+				return ret;
 		}
 		return 0;
 	}

@@ -18,15 +18,6 @@
 #include <smb2.h>
 #include <filer_shared.h>
 
-/* Workaround: the libsmb2.h shipped with the ps2homebrew CI container
- * references SMB2_GUID_SIZE and smb2_lease_key without defining them,
- * which makes smb2.c fail to compile. Provide them here. Remove this
- * block once the PS2SDK container's libsmb2.h is fixed. */
-#ifndef SMB2_GUID_SIZE
-#define SMB2_GUID_SIZE 16
-#endif
-typedef uint8_t smb2_lease_key[16];
-
 #include <smb2/libsmb2.h>
 
 struct smb2_share *smb2_shares = NULL;
@@ -167,9 +158,9 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 		sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
 		IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
 		sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], ip4[3]);
+		IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], &ip4[3]);
 		sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], ip4[3]);
+		IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], &ip4[3]);
 		ps2ipInit(&IP, &NM, &GW);
 		netfs_net_inited = 1;
 	}
