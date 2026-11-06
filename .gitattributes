@@ -1,20 +1,33 @@
-# Force LF on checkout. CI runs in a Linux (Alpine) container and breaks on
-# CRLF: a "#!/bin/sh\r" shebang makes `env` look for "sh\r", and a trailing \r
-# on Makefile recipe lines gets parsed as part of a filename.
-# This also self-heals files that were uploaded with Windows CRLF line endings.
+# Force LF on checkout for every text file, regardless of the contributor's OS.
+# This is the primary guard against Windows CRLF sneaking into shell scripts,
+# Makefiles and YAML, which makes BusyBox `sh` choke with "unexpected \")\"" /
+# "syntax error" on Alpine CI runners. The .github/workflows step "Normalize
+# line endings (strip CR)" is a secondary, build-time safety net.
 * text=auto eol=lf
 
-# Shell scripts are executed directly; their shebang must be exact.
-*.sh text eol=lf
-
-# Build scripts / metadata that must never be CRLF-mangled.
-*.py text eol=lf
-Makefile text eol=lf
-*.mk text eol=lf
-
-# Binary assets must be left byte-for-byte.
-*.irx binary
-*.png binary
-*.jpg binary
-*.gz binary
-*.zip binary
+# Explicitly mark the file types that MUST stay LF (defensive, in case
+# `text=auto` ever mis-detects one of them as binary).
+*.sh eol=lf
+*.yml eol=lf
+*.yaml eol=lf
+Makefile eol=lf
+*.mk eol=lf
+*.c eol=lf
+*.h eol=lf
+*.s eol=lf
+*.S eol=lf
+*.asm eol=lf
+*.inc eol=lf
+*.ld eol=lf
+*.txt eol=lf
+*.md eol=lf
+*.cfg eol=lf
+*.cnf eol=lf
+*.conf eol=lf
+*.ini eol=lf
+*.ee eol=lf
+*.iop eol=lf
+*.LNG eol=lf
+.clang-format eol=lf
+.clang-tidy eol=lf
+.gitignore eol=lf
