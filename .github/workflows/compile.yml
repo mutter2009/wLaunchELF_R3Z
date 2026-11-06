@@ -96,6 +96,12 @@ jobs:
         echo "PS2SDK=$PS2SDK"
         git clone --depth 1 https://github.com/sahlberg/libnfs.git "${RUNNER_TEMP:-/tmp}/libnfs"
         cd "${RUNNER_TEMP:-/tmp}/libnfs/ps2_ee"
+        # ps2_compat.c calls inet_addr()/htons() but is missing <arpa/inet.h>;
+        # modern PS2 GCC treats implicit declarations as hard errors, so the
+        # ps2_ee build of libnfs fails. Inject the include. The inet_addr/htons
+        # symbols/macros come from PS2SDK's <arpa/inet.h> + the linked -lps2ip.
+        awk ' /#include "ps2_compat.h"/ { print; print "#include <arpa/inet.h>"; next } { print } ' ps2_compat.c > ps2_compat.c.tmp && mv ps2_compat.c.tmp ps2_compat.c
+        grep -n "arpa/inet.h" ps2_compat.c || echo "WARN: arpa/inet.h not injected"
         # libnfs' PS2 port ships its DNS/hostname shims in ps2_ee/ps2_compat.c,
         # but the stock Makefile.PS2_EE forgets to compile/link ps2_compat.o, so
         # nfs_getaddrinfo / nfs_freeaddrinfo are left undefined. Patch them in.
