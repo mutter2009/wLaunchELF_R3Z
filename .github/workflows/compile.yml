@@ -88,7 +88,16 @@ jobs:
           -name '*.cnf' -o -name '*.conf' -o -name '*.ini' -o -name '*.ee' -o \
           -name '*.iop' -o -name '*.cmake' -o -name '.clang-format' -o \
           -name '.clang-tidy' -o -name '.gitignore' \
-        \) -exec sh -c 'for f in "$@"; do tr -d "\r" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done' _ {} +
+        \        ) -exec sh -c 'for f in "$@"; do tr -d "\r" < "$f" > "$f.tmp" && mv "$f.tmp" "$f"; done' _ {} +
+
+    - name: Patch FatFs for Chinese (GBK/CP936) long file names
+      run: |
+        # 让 FAT32/exFAT 设备上的中文/日文长文件名正确显示：改写 PS2SDK 自带
+        # FatFs 的 ffconf.h（FF_CODE_PAGE=936 + LFN），并从源码重编
+        # bdm / bdmfs_fatfs / usbmass_bd 三个 IOP IRX，再拷回 $PS2SDK/iop/irx，
+        # 这样 wLaunchELF 嵌入的是补丁后的 IRX。必须在 Compile 之前执行。
+        # （脚本内部对 PS2SDKSRC / FatFs 源码缺失都有兜底，不强制前置条件。）
+        bash scripts/ci/patch_fatfs_chinese.sh
 
     - name: Install libnfs (PS2 EE) — required by the NETFS build
       if: matrix.netfs == '1'
@@ -118,7 +127,7 @@ jobs:
 
     - name: Ensure scripts are executable
       run: |
-        chmod +x scripts/ci/resolve_make_args.sh
+        chmod +x scripts/ci/resolve_make_args.sh scripts/ci/patch_fatfs_chinese.sh
 
     - name: Compile wLaunchELF
       run: |
