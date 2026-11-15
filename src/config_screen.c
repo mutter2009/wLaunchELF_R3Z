@@ -234,15 +234,15 @@ void Config_Screen(void)
 				printXY(c, x + (space * (i + 1)) - FONT_WIDTH, y, setting->color[i], TRUE, 0);
 				}  //ends loop for colour RGB values
 				y += FONT_HEIGHT * 2;
-				bool_label_width = (int)strlen(LNG(TV_mode));
-				if ((int)strlen(LNG(Screen_X_offset)) > bool_label_width)
-					bool_label_width = (int)strlen(LNG(Screen_X_offset));
-				if ((int)strlen(LNG(Screen_Y_offset)) > bool_label_width)
-					bool_label_width = (int)strlen(LNG(Screen_Y_offset));
-				if ((int)strlen(LNG(Menu_Frame)) > bool_label_width)
-					bool_label_width = (int)strlen(LNG(Menu_Frame));
-				if ((int)strlen(LNG(Popups_Opaque)) > bool_label_width)
-					bool_label_width = (int)strlen(LNG(Popups_Opaque));
+				bool_label_width = configLabelDisplayWidth(LNG(TV_mode));
+				if (configLabelDisplayWidth(LNG(Screen_X_offset)) > bool_label_width)
+					bool_label_width = configLabelDisplayWidth(LNG(Screen_X_offset));
+				if (configLabelDisplayWidth(LNG(Screen_Y_offset)) > bool_label_width)
+					bool_label_width = configLabelDisplayWidth(LNG(Screen_Y_offset));
+				if (configLabelDisplayWidth(LNG(Menu_Frame)) > bool_label_width)
+					bool_label_width = configLabelDisplayWidth(LNG(Menu_Frame));
+				if (configLabelDisplayWidth(LNG(Popups_Opaque)) > bool_label_width)
+					bool_label_width = configLabelDisplayWidth(LNG(Popups_Opaque));
 				if (setting->TV_mode == TV_mode_NTSC)
 					tv_mode_value = "NTSC";
 				else if (setting->TV_mode == TV_mode_PAL)

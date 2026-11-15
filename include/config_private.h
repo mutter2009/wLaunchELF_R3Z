@@ -49,6 +49,7 @@ enum {
 
 void configFormatLabelValue(char *dst, size_t dst_size, const char *label, const char *value);
 void configFormatLabelValueAligned(char *dst, size_t dst_size, const char *label, const char *value, int label_width);
+int configLabelDisplayWidth(const char *s);
 void configFormatSavePathValue(char *dst, size_t dst_size, const char *path, const char *loaded_path);
 void configAppendPathFile(char *dst, size_t dst_size, const char *dir, const char *filename);
 void configBuildSysconfPath(char *dst, size_t dst_size, const char *filename);

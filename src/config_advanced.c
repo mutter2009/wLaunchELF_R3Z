@@ -121,21 +121,21 @@ void Config_Advanced(void)
 #else
 			hostwrite_label = LNG(Enable_Host_write);
 #endif
-			bool_label_width = (int)strlen(app_gameid_label);
-			if ((int)strlen(cdrom_gameid_label) > bool_label_width)
-				bool_label_width = (int)strlen(cdrom_gameid_label);
-			if ((int)strlen(psu_huge_label) > bool_label_width)
-				bool_label_width = (int)strlen(psu_huge_label);
-			if ((int)strlen(psu_date_label) > bool_label_width)
-				bool_label_width = (int)strlen(psu_date_label);
-			if ((int)strlen(psu_nooverwrite_label) > bool_label_width)
-				bool_label_width = (int)strlen(psu_nooverwrite_label);
-			if ((int)strlen(pathpad_lock_label) > bool_label_width)
-				bool_label_width = (int)strlen(pathpad_lock_label);
-			if ((int)strlen(fb_noicons_label) > bool_label_width)
-				bool_label_width = (int)strlen(fb_noicons_label);
-			if ((int)strlen(hostwrite_label) > bool_label_width)
-				bool_label_width = (int)strlen(hostwrite_label);
+			bool_label_width = configLabelDisplayWidth(app_gameid_label);
+			if (configLabelDisplayWidth(cdrom_gameid_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(cdrom_gameid_label);
+			if (configLabelDisplayWidth(psu_huge_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(psu_huge_label);
+			if (configLabelDisplayWidth(psu_date_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(psu_date_label);
+			if (configLabelDisplayWidth(psu_nooverwrite_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(psu_nooverwrite_label);
+			if (configLabelDisplayWidth(pathpad_lock_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(pathpad_lock_label);
+			if (configLabelDisplayWidth(fb_noicons_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(fb_noicons_label);
+			if (configLabelDisplayWidth(hostwrite_label) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(hostwrite_label);
 
 			printXY(LNG(Advanced_Settings), x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;

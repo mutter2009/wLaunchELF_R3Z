@@ -51,6 +51,46 @@ void configFormatLabelValue(char *dst, size_t dst_size, const char *label, const
 	snprintf(dst + prefix_len, dst_size - prefix_len, "%.*s", value_len, value ? value : "");
 }
 
+/* 计算菜单标签的「显示列宽」：ASCII 占 1 列，中文(UTF-8)/GBK/SJIS 全角占 2 列。
+ * printXY 以 8px 绘制 ASCII、16px 绘制中文字模；若按 strlen() 的字节数补空格，
+ * 中英混排的标签会把右侧的「开/关」推到不同列，因此这里按显示宽度对齐。 */
+int configLabelDisplayWidth(const char *s)
+{
+	int width = 0;
+	const unsigned char *p = (const unsigned char *)s;
+
+	if (p == NULL)
+		return 0;
+
+	while (*p) {
+		unsigned char c = *p;
+		int n = 1;
+		int i;
+
+		if (c >= 0x80) {
+			if ((c & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80)
+				n = 2;
+			else if ((c & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80)
+				n = 3;
+			else if ((c & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 &&
+			         (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80)
+				n = 4;
+			else
+				n = 2;  /* GBK / Shift-JIS 双字节 */
+			/* 尾部不完整的多字节序列按单字节处理，避免越界 */
+			for (i = 1; i < n; i++) {
+				if (p[i] == 0) {
+					n = 1;
+					break;
+				}
+			}
+		}
+		width += (n == 1) ? 1 : 2;
+		p += n;
+	}
+	return width;
+}
+
 void configFormatLabelValueAligned(char *dst, size_t dst_size, const char *label, const char *value, int label_width)
 {
 	int prefix_len;
@@ -63,7 +103,7 @@ void configFormatLabelValueAligned(char *dst, size_t dst_size, const char *label
 	if (label_width < 0)
 		label_width = 0;
 
-	label_len = (label != NULL) ? (int)strlen(label) : 0;
+	label_len = configLabelDisplayWidth(label);
 	pad_spaces = label_width - label_len;
 	if (pad_spaces < 0)
 		pad_spaces = 0;
@@ -1003,7 +1043,12 @@ enum CONFIG_MAIN {
 	CONFIG_MAIN_SETTINGS,
 	CONFIG_MAIN_NETWORK,
 	CONFIG_MAIN_ADVANCED,
+#ifdef NETFS
+	CONFIG_MAIN_SMB,
+	CONFIG_MAIN_LAST = CONFIG_MAIN_SMB,
+#else
 	CONFIG_MAIN_LAST = CONFIG_MAIN_ADVANCED,
+#endif
 
 	CONFIG_MAIN_SAVE,
 	CONFIG_MAIN_CANCEL,
@@ -1410,6 +1455,10 @@ void config(char *mainMsg, char *CNF)
 						Config_Network();
 					} else if (s == CONFIG_MAIN_ADVANCED) {
 						Config_Advanced();
+#ifdef NETFS
+					} else if (s == CONFIG_MAIN_SMB) {
+						Config_SMB();
+#endif
 					} else if (s == CONFIG_MAIN_SAVE) {
 						save_target = configSaveTargetPrompt(save_override_path, save_cwd_path, save_sysconf_path, LoadedConfigPath, has_override_path);
 						if (save_target != CONFIG_SAVE_TARGET_CANCEL) {
@@ -1502,9 +1551,9 @@ void config(char *mainMsg, char *CNF)
 
 			y += FONT_HEIGHT / 2;
 
-			bool_label_width = (int)strlen(LNG(Show_launch_titles));
-			if ((int)strlen(LNG(Hide_full_ELF_paths)) > bool_label_width)
-				bool_label_width = (int)strlen(LNG(Hide_full_ELF_paths));
+			bool_label_width = configLabelDisplayWidth(LNG(Show_launch_titles));
+			if (configLabelDisplayWidth(LNG(Hide_full_ELF_paths)) > bool_label_width)
+				bool_label_width = configLabelDisplayWidth(LNG(Hide_full_ELF_paths));
 
 			configFormatLabelValueAligned(c, sizeof(c), LNG(Show_launch_titles), (setting->Show_Titles)? LNG(ON) : LNG(OFF), bool_label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
@@ -1526,6 +1575,11 @@ void config(char *mainMsg, char *CNF)
 			sprintf(c, "  %s...", LNG(Advanced_Settings));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
+#ifdef NETFS
+			sprintf(c, "  %s...", LNG(SMB_Config));
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+#endif
 			y += FONT_HEIGHT / 2;
 
 			snprintf(value, sizeof(value), "...");
