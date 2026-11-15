@@ -1,5 +1,15 @@
 #include "launchelf.h"
 #include "neutrino_gameid.h"
+#include <stddef.h>
+
+/*
+ * openPathForRead() is declared by launchelf.h in the current source tree
+ * (and by popstarter_internal.h).  Keep a local prototype too: if an older
+ * launchelf.h without this declaration ends up in the checkout, the PS2 GCC
+ * toolchain treats the implicit declaration as a hard error.  Repeating an
+ * identical prototype is legal C and harmless.
+ */
+int openPathForRead(const char *path, char *opened_path, size_t opened_path_size);
 
 #define ISO_SECTOR_SIZE 2048
 #define ISO_PVD_LBA 16
