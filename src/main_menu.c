@@ -7,9 +7,7 @@
 //------------------------------
 static void setLaunchKeys(void)
 {
-	/* SELECT is the built-in "system configuration" key. Keep it pointing
-	 * at the config action unless the user explicitly assigned an ELF. */
-	if (!setting->LK_Flag[SETTING_LK_SELECT] || !setting->LK_Path[SETTING_LK_SELECT][0])
+	if (!setting->LK_Flag[SETTING_LK_SELECT])
 		strcpy(setting->LK_Path[SETTING_LK_SELECT], setting->Misc_Configure);
 }
 //------------------------------
@@ -291,16 +289,6 @@ void MainMenuHandlePad(MainMenuState *state, int nElfs, char *runPath, size_t ru
 					state->selected++;
 					if (state->selected >= nElfs)
 						state->selected = 0;
-				} else if (new_pad & PAD_SELECT) {
-					/* SELECT opens the system configuration immediately.
-					 * Without this the DPAD menu only highlighted the
-					 * "system configuration" entry and required a second
-					 * press of the confirm button. */
-					state->user_acted = 1;
-					if (setting->LK_Path[SETTING_LK_SELECT][0])
-						snprintf(runPath, runPath_len, "%s", setting->LK_Path[SETTING_LK_SELECT]);
-					else
-						snprintf(runPath, runPath_len, "%s", setting->Misc_Configure);
 				} else if ((!swapKeys && new_pad & PAD_CROSS) || (swapKeys && new_pad & PAD_CIRCLE)) {
 					state->mode = MAIN_MENU_MODE_BUTTON;
 				} else if ((swapKeys && new_pad & PAD_CROSS) || (!swapKeys && new_pad & PAD_CIRCLE)) {

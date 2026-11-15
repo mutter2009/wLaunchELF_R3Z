@@ -114,6 +114,8 @@ static int loadSMB2CNF(char *path)
                 } else if (!strcmp(name, "URL")) {
                         struct smb2_context *smb2;
                         struct smb2_url *url;
+                        char full_url[512];
+                        const char *sess_user;
 
                         /* A malformed/empty URL must not crash the console:
                          * smb2_parse_url() returns NULL for those. Also guard
@@ -138,11 +140,31 @@ static int loadSMB2CNF(char *path)
                          * session setup, while password="" forces the
                          * NTLMv2 hash / guest path that hangs on anonymous
                          * shares. This was the "Reconnect freezes" bug. */
-                        smb2_set_user(smb2, (smb2_share->user && smb2_share->user[0]) ?
-                                             smb2_share->user : "");
+                        /* Older builds wrote USERNAME=GUEST as a default.
+                         * With an empty password that is a phantom account,
+                         * not a credential: drop it here too (the settings
+                         * page already does) so an existing SMB.CNF cannot
+                         * keep forcing the authenticated/guest path. */
+                        sess_user = (smb2_share->user && smb2_share->user[0] &&
+                                     !(stricmp(smb2_share->user, "GUEST") == 0 &&
+                                       (!smb2_share->password || smb2_share->password[0] == '\0')))
+                                    ? smb2_share->user : "";
+                        smb2_set_user(smb2, sess_user);
                         if (smb2_share->password && smb2_share->password[0])
                                 smb2_set_password(smb2, smb2_share->password);
-                        url = smb2_parse_url(smb2, smb2_share->url);
+                        /* libsmb2 defaults to "no command timeout". An
+                         * unreachable server then blocks the synchronous
+                         * smb2_connect_share() forever and locks the whole
+                         * GUI ("Reconnect freezes"). Ask the library to give
+                         * up after 5 seconds. Query parameters are consumed
+                         * by smb2_parse_url(); they are not part of
+                         * url->share, and SMB.CNF keeps the clean URL so the
+                         * settings page reads it back unchanged. */
+                        if (strchr(value, '?') == NULL)
+                                snprintf(full_url, sizeof(full_url), "%s?timeout=5", value);
+                        else
+                                snprintf(full_url, sizeof(full_url), "%s", value);
+                        url = smb2_parse_url(smb2, full_url);
                         if (url == NULL || url->server == NULL || url->share == NULL ||
                             url->share[0] == '\0') {
                                 DPRINTF("invalid SMB URL: %s (%s)\n", value, smb2_get_error(smb2));
@@ -153,8 +175,7 @@ static int loadSMB2CNF(char *path)
                                 continue;
                         }
                         if (smb2_connect_share(smb2, url->server, url->share,
-                                               (smb2_share->user && smb2_share->user[0]) ?
-                                                   smb2_share->user : "") < 0) {
+                                               sess_user) < 0) {
                                 DPRINTF("failed to connect to : //%s/%s %s\n",
                                            url->server, url->share,
                                            smb2_get_error(smb2));

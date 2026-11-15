@@ -490,6 +490,19 @@ static void load_ps2ip(void)
 #ifdef NETFS
 int init_netfs(void)
 {
+	/* Idempotent. Re-entering load_ps2ip() from the file browser re-ran
+	 * switchNetworkStack(), which resets the IOP and reloads host:/usbkbd
+	 * drivers. That is what made opening "SMB network" sit forever on
+	 * "Loading host drivers...". Once the stack is up, just keep it. */
+	if (netfs_net_inited)
+		return 0;
+
+#if defined(ETH) && defined(UDPFS)
+	/* NETFS uses the ETH stack. Claim it before load_ps2ip() so the
+	 * ETH<->UDPFS guard does not reset the IOP from inside the GUI. */
+	network_stack_mode = NETWORK_STACK_ETH;
+#endif
+
 	/* Bring up DEV9 + NETMAN + SMAP + PS2IP on the EE. init_smb2() performs
 	 * the idempotent NetManInit()/ps2ipInit() and parses SMB.CNF; init_nfs()
 	 * parses NFS.CNF. Both tolerate missing config files. */
@@ -505,14 +518,14 @@ int init_netfs(void)
 
 int netfs_reconnect(void)
 {
-	/* Do NOT call init_smb2()/init_nfs() here: init_smb2() waits for the
-	 * Ethernet link again (ethWaitValidNetIFLinkState, up to 10s) and the
+	/* Only re-mount SMB shares. Do NOT call init_smb2()/init_nfs() here:
+	 * init_smb2() waits for the Ethernet link again (up to 10s) and the
 	 * repeated NetMan/ps2ip re-entry from inside the settings GUI is what
-	 * made "Reconnect" appear to freeze the console. The stack is already
-	 * up, so only tear down and re-read the CNF files. */
-	extern void deinit_nfs(void);
-	extern int smb2_reload(void);
+	 * made "Reconnect" appear to freeze the console. init_nfs() is skipped
+	 * too: an unreachable NFS.CNF server would block the EE thread even
+	 * though the user only changed SMB settings. */
 	extern int smb2_mount_count(void);
+	extern int smb2_reload(void);
 	int mounted;
 
 	if (!netfs_net_inited) {
@@ -520,9 +533,7 @@ int netfs_reconnect(void)
 		return (smb2_mount_count() > 0) ? 0 : -1;
 	}
 
-	deinit_nfs();
 	mounted = smb2_reload();  /* deinit_smb2() + re-read SMB.CNF */
-	init_nfs(ip, netmask, gw);
 	return (mounted > 0) ? 0 : -1;
 }
 #endif

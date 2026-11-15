@@ -153,6 +153,9 @@ enum CONFIG_NET {
 #endif
 	CONFIG_NET_AFT_IP,
 	CONFIG_NET_SAVE = CONFIG_NET_AFT_IP,
+#ifdef NETFS
+	CONFIG_NET_SMB_SAVE,
+#endif
 	CONFIG_NET_RETURN,
 
 	CONFIG_NET_COUNT
@@ -249,7 +252,7 @@ static void netBuildSmbUrl(char *url, size_t url_sz, const char *host,
  * same column. Uses display width (Chinese glyphs = 2 columns), not strlen(). */
 static int netLabelWidth(void)
 {
-	const char *labels[12];
+	const char *labels[13];
 	int n = 0, w = 0, i;
 
 	/* Assign one by one: LNG() is a runtime table lookup, so an aggregate
@@ -265,6 +268,7 @@ static int netLabelWidth(void)
 	labels[n++] = LNG(SMB_Password);
 	labels[n++] = LNG(SMB_AutoConnect);
 	labels[n++] = LNG(SMB_Reconnect);
+	labels[n++] = LNG(SMB_Save_To);
 #endif
 	labels[n++] = LNG(Save_to);
 
@@ -275,6 +279,42 @@ static int netLabelWidth(void)
 	}
 	return w;
 }
+
+/* Every row on this page starts at the same column and every value starts
+ * at column label_width+4. Right-aligning the labels (configFormatLabelValue
+ * Aligned) put all colons in one column but pushed the long "SMB..." labels
+ * to the left edge, so the SMB block visually did not line up with the
+ * three IP rows above it. Pad AFTER the label instead, using display width
+ * so mixed Chinese/ASCII labels still land in the same column. */
+static void netFormatRow(char *dst, size_t dst_size, const char *label,
+                         const char *value, int label_width)
+{
+	int pad = label_width - configLabelDisplayWidth(label);
+
+	if (pad < 0)
+		pad = 0;
+	snprintf(dst, dst_size, "  %s:%*s%s", label ? label : "", pad + 1, "",
+	         value ? value : "");
+}
+
+#ifdef NETFS
+/* Show the SMB server in exactly the same four-octet layout as the IP,
+ * netmask and gateway rows above it (e.g. "192 . 168 . 001 . 001"). */
+static void netFormatSmbHost(char *dst, size_t dst_size, const char *host)
+{
+	int o[4];
+
+	if (host[0] == '\0') {
+		snprintf(dst, dst_size, "-");
+		return;
+	}
+	if (sscanf(host, "%d.%d.%d.%d", &o[0], &o[1], &o[2], &o[3]) == 4)
+		snprintf(dst, dst_size, "%.3i . %.3i . %.3i . %.3i",
+		         o[0], o[1], o[2], o[3]);
+	else
+		snprintf(dst, dst_size, "%s", host);  /* host name, not an IPv4 */
+}
+#endif
 
 void Config_Network(void)
 {
@@ -301,7 +341,6 @@ void Config_Network(void)
 	char smb_host[NET_SMB_HOST_MAX];
 	char smb_port[NET_SMB_PORT_MAX];
 	char smb_share[NET_SMB_SHARE_MAX];
-	char smb_save_path[MAX_PATH];
 	char smb_masked[NET_SMB_PASS_MAX];
 	int smb_auto = 0;
 #endif
@@ -404,7 +443,16 @@ void Config_Network(void)
 				} else if (s == CONFIG_NET_SMB_AUTO) {
 					smb_auto = smb_auto ? 0 : 1;
 				} else if (s == CONFIG_NET_SMB_RECONNECT) {
-					int rc = netfs_reconnect();
+					int rc;
+
+					/* The three octet rows only update ipdata. Commit them
+					 * to the globals that init_smb2() feeds to ps2ipInit(),
+					 * so SMB runs on the local IP / netmask / gateway shown
+					 * on this page even before "Save to" is used. */
+					sprintf(ip, "%i.%i.%i.%i", ipdata.ip[0], ipdata.ip[1], ipdata.ip[2], ipdata.ip[3]);
+					sprintf(netmask, "%i.%i.%i.%i", ipdata.nm[0], ipdata.nm[1], ipdata.nm[2], ipdata.nm[3]);
+					sprintf(gw, "%i.%i.%i.%i", ipdata.gw[0], ipdata.gw[1], ipdata.gw[2], ipdata.gw[3]);
+					rc = netfs_reconnect();
 					snprintf(NetMsg, sizeof(NetMsg), "%s",
 					         rc == 0 ? LNG(SMB_Connected) : LNG(SMB_ConnectFailed));
 #endif
@@ -423,11 +471,29 @@ void Config_Network(void)
 							save_path = save_sysconf_path;
 						configRefreshSaveTargetForWrite(save_target, save_path, MAX_PATH, "IPCONFIG.DAT", LoadedIPConfigPath);
 						saveNetworkSettings(NetMsg, save_path);
+					}
 #ifdef NETFS
-						/* SMB.CNF lives next to the chosen IPCONFIG.DAT. */
-						snprintf(smb_save_path, sizeof(smb_save_path), "%s", save_path);
+				} else if (s == CONFIG_NET_SMB_SAVE) {
+					save_target = configSaveTargetPrompt(save_override_path, save_cwd_path,
+					                                    save_sysconf_path, LoadedIPConfigPath,
+					                                    has_override_path);
+					if (save_target != CONFIG_SAVE_TARGET_CANCEL) {
+						char smb_path[MAX_PATH];
+
+						if (save_target == CONFIG_SAVE_TARGET_OVERRIDE)
+							save_path = save_override_path;
+						else if (save_target == CONFIG_SAVE_TARGET_CWD)
+							save_path = save_cwd_path;
+						else
+							save_path = save_sysconf_path;
+
+						/* SMB settings live in their own SMB.CNF using the
+						 * same .CNF suffix wLaunchELF uses for its config.
+						 * Nothing is mixed into IPCONFIG.DAT and no extra
+						 * copies are mirrored to other locations. */
+						snprintf(smb_path, sizeof(smb_path), "%s", save_path);
 						{
-							char *sl = strrchr(smb_save_path, '/');
+							char *sl = strrchr(smb_path, '/');
 							if (sl != NULL)
 								strcpy(sl + 1, "SMB.CNF");
 						}
@@ -436,20 +502,15 @@ void Config_Network(void)
 							snprintf(smb_name, sizeof(smb_name), "%s",
 							         smb_share[0] ? smb_share : "SMB");
 						if (smb_url[0] == '\0') {
-							/* Without an URL, SMB.CNF cannot mount anything. */
 							snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(Saved_Failed));
-						} else if (!saveSMBConfig(NetMsg, smb_save_path, smb_name, smb_url,
+						} else if (!saveSMBConfig(NetMsg, smb_path, smb_name, smb_url,
 						                          smb_user, smb_pass, smb_auto)) {
 							snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(Saved_Failed));
 						} else {
-							/* init_smb2() only scans the fixed SYS-CONF paths at
-							 * boot. Always mirror a copy there so the settings
-							 * survive a reboot when "Save to" points elsewhere. */
-							saveSMBConfigToBootPath(smb_name, smb_url,
-							                        smb_user, smb_pass, smb_auto);
+							snprintf(NetMsg, sizeof(NetMsg), "%s %s", LNG(Saved), "SMB.CNF");
 						}
-#endif
 					}
+#endif
 				} else
 					return;
 			} else if (new_pad & PAD_TRIANGLE)
@@ -468,39 +529,39 @@ void Config_Network(void)
 
 			snprintf(value, sizeof(value), "%.3i . %.3i . %.3i . %.3i",
 			         ipdata.ip[0], ipdata.ip[1], ipdata.ip[2], ipdata.ip[3]);
-			configFormatLabelValueAligned(c, sizeof(c), LNG(IP_Address), value, label_width);
+			netFormatRow(c, sizeof(c), LNG(IP_Address), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
 			snprintf(value, sizeof(value), "%.3i . %.3i . %.3i . %.3i",
 			         ipdata.nm[0], ipdata.nm[1], ipdata.nm[2], ipdata.nm[3]);
-			configFormatLabelValueAligned(c, sizeof(c), LNG(Netmask), value, label_width);
+			netFormatRow(c, sizeof(c), LNG(Netmask), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
 			snprintf(value, sizeof(value), "%.3i . %.3i . %.3i . %.3i",
 			         ipdata.gw[0], ipdata.gw[1], ipdata.gw[2], ipdata.gw[3]);
-			configFormatLabelValueAligned(c, sizeof(c), LNG(Gateway), value, label_width);
+			netFormatRow(c, sizeof(c), LNG(Gateway), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
 #ifdef NETFS
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_Server_IP),
-			                              smb_host[0] ? smb_host : "-", label_width);
+			netFormatSmbHost(value, sizeof(value), smb_host);
+			netFormatRow(c, sizeof(c), LNG(SMB_Server_IP), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_Port),
+			netFormatRow(c, sizeof(c), LNG(SMB_Port),
 			                              smb_port[0] ? smb_port : "445", label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_Share),
+			netFormatRow(c, sizeof(c), LNG(SMB_Share),
 			                              smb_share[0] ? smb_share : "-", label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_User),
+			netFormatRow(c, sizeof(c), LNG(SMB_User),
 			                              smb_user[0] ? smb_user : "-", label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
@@ -513,26 +574,31 @@ void Config_Network(void)
 					smb_masked[k] = '*';
 				smb_masked[plen] = '\0';
 			}
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_Password),
+			netFormatRow(c, sizeof(c), LNG(SMB_Password),
 			                              smb_pass[0] ? smb_masked : "-", label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_AutoConnect),
+			netFormatRow(c, sizeof(c), LNG(SMB_AutoConnect),
 			                              smb_auto ? LNG(SMB_On) : LNG(SMB_Off), label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValueAligned(c, sizeof(c), LNG(SMB_Reconnect), ">", label_width);
+			netFormatRow(c, sizeof(c), LNG(SMB_Reconnect), ">", label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 #endif
 			y += FONT_HEIGHT / 2;
 
 			snprintf(value, sizeof(value), "...");
-			configFormatLabelValueAligned(c, sizeof(c), LNG(Save_to), value, label_width);
+			netFormatRow(c, sizeof(c), LNG(Save_to), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
+#ifdef NETFS
+			netFormatRow(c, sizeof(c), LNG(SMB_Save_To), "SMB.CNF", label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+#endif
 			y += FONT_HEIGHT / 2;
 			sprintf(c, "  %s", LNG(RETURN));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
