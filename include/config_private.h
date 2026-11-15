@@ -70,6 +70,7 @@ int CheckMC(void);
 void Config_Screen(void);
 void Config_Startup(void);
 void Config_Network(void);
+void Config_SMB(void);
 void Config_Advanced(void);
 
 #endif
