@@ -127,8 +127,12 @@ void nonDialog(char *message)
 	}
 }
 
-// keyboard returns string length, or -1 when cancelled.
-int keyboard(char *out, int max)
+// keyboardEx returns string length, or -1 when cancelled.
+// cursor_end != 0 puts the edit cursor at the end of the initial string.
+// The historical behaviour (cursor before the last '.') is meant for editing
+// file names; text fields such as IP addresses / SMB share names need to be
+// appended to, so they use cursor_end = 1.
+int keyboardEx(char *out, int max, int cursor_end)
 {
 	int event, post_event = 0;
 	const int
@@ -148,7 +152,7 @@ int keyboard(char *out, int max)
 	const char *key_label;
 
 	p = strrchr(out, '.');
-	if (p == NULL)
+	if (p == NULL || cursor_end)
 		cur = strlen(out);
 	else
 		cur = (int)(p - out);
@@ -388,4 +392,11 @@ int keyboard(char *out, int max)
 		event = 0;
 	}
 	return strlen(out);
+}
+
+// Backwards-compatible entry point used by the rest of wLaunchELF:
+// keep the original "cursor before the last dot" behaviour for file names.
+int keyboard(char *out, int max)
+{
+	return keyboardEx(out, max, 0);
 }

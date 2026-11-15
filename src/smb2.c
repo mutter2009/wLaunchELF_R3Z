@@ -115,8 +115,17 @@ static int loadSMB2CNF(char *path)
                         struct smb2_context *smb2;
                         struct smb2_url *url;
 
+                        /* A malformed/empty URL must not crash the console:
+                         * smb2_parse_url() returns NULL for those. Also guard
+                         * against a CNF that has URL before/without NAME. */
+                        if (smb2_share->name == NULL) {
+                                smb2_share->name = strdup("SMB");
+                        }
+                        if (value[0] == '\0') {
+                                continue;
+                        }
                         if (smb2_find_share(smb2_share->name)) {
-                                free(smb2_share);
+                                free_smb2_share(smb2_share);
                                 smb2_share = NULL;
                                 continue;
                         }
@@ -125,6 +134,14 @@ static int loadSMB2CNF(char *path)
                         smb2_set_user(smb2, smb2_share->user);
                         smb2_set_password(smb2, smb2_share->password);
                         url = smb2_parse_url(smb2, smb2_share->url);
+                        if (url == NULL || url->server == NULL || url->share == NULL) {
+                                DPRINTF("invalid SMB URL: %s (%s)\n", value, smb2_get_error(smb2));
+                                if (url != NULL)
+                                        smb2_destroy_url(url);
+                                free_smb2_share(smb2_share);
+                                smb2_share = NULL;
+                                continue;
+                        }
                         if (smb2_connect_share(smb2, url->server, url->share,
                                                smb2_share->user) < 0) {
                                 DPRINTF("failed to connect to : //%s/%s %s\n",
@@ -192,9 +209,19 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
         if (!rc) {
                 rc = loadSMB2CNF("mass:/SYS-CONF/SMB.CNF");
         }
-	DPRINTF("init_smb2.\n");
+	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 
-        return 0;
+        return rc;
+}
+
+int smb2_mount_count(void)
+{
+        struct smb2_share *share;
+        int n = 0;
+
+        for (share = smb2_shares; share != NULL; share = share->next)
+                n++;
+        return n;
 }
 
 static struct smb2_share *smb2_find_share(const char *name)

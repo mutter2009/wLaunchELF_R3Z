@@ -76,8 +76,15 @@ void Config_Advanced(void);
 
 /* SMB.CNF helpers shared with the merged single-page network settings. */
 void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_connect);
-void saveSMBConfig(char *Message, const char *target_path, const char *name,
-                   const char *url, const char *user, const char *pass, int auto_connect);
+int saveSMBConfig(char *Message, const char *target_path, const char *name,
+                  const char *url, const char *user, const char *pass, int auto_connect);
+int saveSMBConfigToBootPath(const char *name, const char *url,
+                            const char *user, const char *pass, int auto_connect);
 int smbTextEntry(const char *title, char *buf, int maxlen);
+
+#ifdef NETFS
+/* Number of shares currently mounted by libsmb2 (0 = connect failed). */
+int smb2_mount_count(void);
+#endif
 
 #endif

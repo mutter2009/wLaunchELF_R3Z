@@ -17,25 +17,81 @@
 #define SMB_USER_MAX 64
 #define SMB_PASS_MAX 64
 
-// 字符输入面板可用字符集（小写/大写/数字/常用符号）
-static const char SMB_CHARSET[] =
-    "abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "0123456789"
-    " .-_:/@";
-#define SMB_CHARSET_LEN (sizeof(SMB_CHARSET) - 1)
+/* The on-screen keyboard (src/gui.c) caps editable text at 33 characters. */
+#define SMB_KB_MAX 33
+
+/* Path most recently written by saveSMBConfig(). Kept in this module so that
+ * re-entering the network page in the same session always reads back what was
+ * just saved, even when the user picked a non SYS-CONF target. */
+static char smb_last_saved_path[MAX_PATH] = "";
+
+#define SMB_CNF_CANDIDATES 8
+#define SMB_CNF_PRIMARY    "mc0:/SYS-CONF/SMB.CNF"
+
+/* Build the SMB.CNF search list. The first entries follow the same targets
+ * the "Save to" dialog offers (last written / IPCONFIG.DAT directory /
+ * CNF_Path override / launch directory); the final three are the fixed
+ * SYS-CONF paths that init_smb2() knows about at boot time. */
+static int smbConfigCandidatePaths(char paths[SMB_CNF_CANDIDATES][MAX_PATH])
+{
+	int n = 0;
+	char tmp[MAX_PATH];
+	char *sl;
+	const char *dir;
+
+	if (smb_last_saved_path[0] != '\0')
+		snprintf(paths[n++], MAX_PATH, "%s", smb_last_saved_path);
+
+	if (LoadedIPConfigPath[0] != '\0') {
+		snprintf(tmp, sizeof(tmp), "%s", LoadedIPConfigPath);
+		sl = strrchr(tmp, '/');
+		if (sl != NULL) {
+			sl[1] = '\0';
+			snprintf(paths[n++], MAX_PATH, "%sSMB.CNF", tmp);
+		}
+	}
+
+	if (setting != NULL && setting->CNF_Path[0] != '\0')
+		configAppendPathFile(paths[n++], MAX_PATH, setting->CNF_Path, "SMB.CNF");
+
+	dir = LaunchElfBootDir[0] ? LaunchElfBootDir : LaunchElfDir;
+	if (dir[0] != '\0')
+		configAppendPathFile(paths[n++], MAX_PATH, dir, "SMB.CNF");
+
+	snprintf(paths[n++], MAX_PATH, "mc0:/SYS-CONF/SMB.CNF");
+	snprintf(paths[n++], MAX_PATH, "mc1:/SYS-CONF/SMB.CNF");
+	snprintf(paths[n++], MAX_PATH, "mass:/SYS-CONF/SMB.CNF");
+	return n;
+}
+
+/* Write a copy of the settings to one of the fixed SYS-CONF paths that
+ * init_smb2() scans at boot. Called after the user-chosen target is written,
+ * so the settings survive a reboot even when "Save to" pointed elsewhere. */
+int saveSMBConfigToBootPath(const char *name, const char *url,
+                            const char *user, const char *pass, int auto_connect)
+{
+	static const char *boot_paths[3] = {
+	    "mc0:/SYS-CONF/SMB.CNF",
+	    "mc1:/SYS-CONF/SMB.CNF",
+	    "mass:/SYS-CONF/SMB.CNF"};
+	char tmpmsg[MAX_PATH];
+	int i;
+
+	for (i = 0; i < 3; i++) {
+		if (saveSMBConfig(tmpmsg, boot_paths[i], name, url, user, pass, auto_connect))
+			return 1;
+	}
+	return 0;
+}
 
 //---------------------------------------------------------------------------
 // 读取已有 SMB.CNF（首个共享）到缓冲区；找不到则留空
 //---------------------------------------------------------------------------
 void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_connect)
 {
-	char *ram, *p, *k, *v;
-	const char *paths[3] = {
-	    "mc0:/SYS-CONF/SMB.CNF",
-	    "mc1:/SYS-CONF/SMB.CNF",
-	    "mass:/SYS-CONF/SMB.CNF"};
-	int i;
+	char *ram = NULL, *p, *k, *v;
+	static char paths[SMB_CNF_CANDIDATES][MAX_PATH];
+	int i, n;
 
 	name[0] = '\0';
 	url[0] = '\0';
@@ -43,7 +99,8 @@ void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_conn
 	pass[0] = '\0';
 	*auto_connect = 0;
 
-	for (i = 0; i < 3; i++) {
+	n = smbConfigCandidatePaths(paths);
+	for (i = 0; i < n; i++) {
 		ram = preloadCNF((char *)paths[i]);
 		if (ram)
 			break;
@@ -74,7 +131,7 @@ void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_conn
 //---------------------------------------------------------------------------
 // 把配置写入目标路径（SMB.CNF）：NAME/USERNAME/PASSWORD/URL
 //---------------------------------------------------------------------------
-void saveSMBConfig(char *Message, const char *target_path,
+int saveSMBConfig(char *Message, const char *target_path,
                           const char *name, const char *url,
                           const char *user, const char *pass, int auto_connect)
 {
@@ -84,14 +141,17 @@ void saveSMBConfig(char *Message, const char *target_path,
 
 	sprintf(Message, "%s", LNG(Saved_Failed));
 	if (target_path == NULL || target_path[0] == '\0')
-		return;
+		return 0;
 
 	configEnsureSysconfDir(target_path);
 	if (genFixPath(target_path, path) < 0)
-		return;
+		return 0;
 
 	fd = genOpen(path, FIO_O_WRONLY | FIO_O_TRUNC | FIO_O_CREAT);
-	if (fd >= 0) {
+	if (fd < 0)
+		return 0;
+
+	{
 		sprintf(line, "NAME=%s\r\n", name);
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
@@ -110,114 +170,36 @@ void saveSMBConfig(char *Message, const char *target_path,
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
 		genClose(fd);
+		snprintf(smb_last_saved_path, sizeof(smb_last_saved_path), "%s", target_path);
 		snprintf(Message, MAX_PATH, "%s %.*s", LNG(Saved), MAX_PATH - 4, target_path);
 	}
+	return 1;
 }
 
 //---------------------------------------------------------------------------
-// 单行文本输入子界面：用字符面板“挑选”字符组合成字符串
+// 单行文本输入：直接复用 wLaunchELF 自带的屏幕小键盘（src/gui.c 的 keyboard），
+// 而不是逐字符滚动挑选。字段名画在键盘弹框上方，编辑光标停在文本末尾。
 //   返回 1 = 确认（接受），0 = 取消（还原）
-//   X:添加字符   □:删除上一个字符   O:确认   △:取消
 //---------------------------------------------------------------------------
 int smbTextEntry(const char *title, char *buf, int maxlen)
 {
-	int cur = 0;       // 字符面板光标
-	int len = (int)strlen(buf);
-	int event = 1, post_event = 0;
-	int x, y, i;
-	char c[MAX_PATH];
-	int win, wend;
-	int selx;
+	int limit = maxlen - 1;
+	int ret;
 
-	while (1) {
-		waitPadReady(0, 0);
-		if (readpad()) {
-			if (new_pad & PAD_LEFT) {
-				event |= 2;
-				if (cur > 0)
-					cur--;
-			} else if (new_pad & PAD_RIGHT) {
-				event |= 2;
-				if (cur < SMB_CHARSET_LEN - 1)
-					cur++;
-			} else if (new_pad & PAD_UP) {
-				event |= 2;
-				cur -= 10;
-				if (cur < 0)
-					cur = 0;
-			} else if (new_pad & PAD_DOWN) {
-				event |= 2;
-				cur += 10;
-				if (cur > SMB_CHARSET_LEN - 1)
-					cur = SMB_CHARSET_LEN - 1;
-			} else if (new_pad & PAD_CROSS) {
-				event |= 2;
-				if (len < maxlen - 1) {
-					buf[len++] = SMB_CHARSET[cur];
-					buf[len] = '\0';
-				}
-			} else if (new_pad & PAD_SQUARE) {
-				event |= 2;
-				if (len > 0) {
-					len--;
-					buf[len] = '\0';
-				}
-			} else if (new_pad & PAD_CIRCLE) {
-				event |= 2;
-				return 1;  // 确认
-			} else if (new_pad & PAD_TRIANGLE) {
-				event |= 2;
-				return 0;  // 取消
-			}
-		}
+	if (limit > SMB_KB_MAX)
+		limit = SMB_KB_MAX;
+	if (limit < 1)
+		return 0;
+	if ((int)strlen(buf) > limit)
+		buf[limit] = '\0';
 
-		if (event || post_event) {
-			clrScr(setting->color[COLOR_BACKGR]);
-			x = Menu_start_x;
-			y = Menu_start_y;
+	clrScr(setting->color[COLOR_BACKGR]);
+	printXY((char *)title, Menu_start_x, Menu_start_y,
+	        setting->color[COLOR_TEXT], TRUE, 0);
+	drawScr();
 
-			printXY((char *)title, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-			y += FONT_HEIGHT / 2;
-
-			// 当前已输入文本
-			sprintf(c, "> %s", buf);
-			printXY(c, x + 2 * FONT_WIDTH, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-			y += FONT_HEIGHT / 2;
-
-			// 字符面板（带窗口滚动与高亮）
-			win = cur - 12;
-			if (win < 0)
-				win = 0;
-			wend = win + 24;
-			if (wend > SMB_CHARSET_LEN) {
-				wend = SMB_CHARSET_LEN;
-				win = wend - 24;
-				if (win < 0)
-					win = 0;
-			}
-			{
-				char winstr[32];
-				int wi = 0;
-				for (i = win; i < wend && wi < (int)sizeof(winstr) - 1; i++)
-					winstr[wi++] = SMB_CHARSET[i];
-				winstr[wi] = '\0';
-				printXY(winstr, x + 2 * FONT_WIDTH, y, setting->color[COLOR_TEXT], TRUE, 0);
-				selx = x + 2 * FONT_WIDTH + (cur - win) * FONT_WIDTH;
-				drawChar((unsigned int)SMB_CHARSET[cur], selx, y, setting->color[COLOR_SELECT]);
-			}
-			y += FONT_HEIGHT;
-			y += FONT_HEIGHT / 2;
-
-			sprintf(c, "X:%s  SQ:%s  O:%s  Tri:%s",
-			        LNG(Add), LNG(Subtract), LNG(OK), LNG(Cancel));
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-		}
-		drawScr();
-		post_event = event;
-		event = 0;
-	}
+	ret = keyboardEx(buf, limit, 1);
+	return (ret >= 0) ? 1 : 0;
 }
 
 //---------------------------------------------------------------------------
