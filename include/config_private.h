@@ -74,4 +74,10 @@ void Config_Network(void);
 void Config_SMB(void);
 void Config_Advanced(void);
 
+/* SMB.CNF helpers shared with the merged single-page network settings. */
+void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_connect);
+void saveSMBConfig(char *Message, const char *target_path, const char *name,
+                   const char *url, const char *user, const char *pass, int auto_connect);
+int smbTextEntry(const char *title, char *buf, int maxlen);
+
 #endif

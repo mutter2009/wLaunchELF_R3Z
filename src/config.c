@@ -1043,12 +1043,7 @@ enum CONFIG_MAIN {
 	CONFIG_MAIN_SETTINGS,
 	CONFIG_MAIN_NETWORK,
 	CONFIG_MAIN_ADVANCED,
-#ifdef NETFS
-	CONFIG_MAIN_SMB,
-	CONFIG_MAIN_LAST = CONFIG_MAIN_SMB,
-#else
 	CONFIG_MAIN_LAST = CONFIG_MAIN_ADVANCED,
-#endif
 
 	CONFIG_MAIN_SAVE,
 	CONFIG_MAIN_CANCEL,
@@ -1455,10 +1450,6 @@ void config(char *mainMsg, char *CNF)
 						Config_Network();
 					} else if (s == CONFIG_MAIN_ADVANCED) {
 						Config_Advanced();
-#ifdef NETFS
-					} else if (s == CONFIG_MAIN_SMB) {
-						Config_SMB();
-#endif
 					} else if (s == CONFIG_MAIN_SAVE) {
 						save_target = configSaveTargetPrompt(save_override_path, save_cwd_path, save_sysconf_path, LoadedConfigPath, has_override_path);
 						if (save_target != CONFIG_SAVE_TARGET_CANCEL) {
@@ -1575,11 +1566,6 @@ void config(char *mainMsg, char *CNF)
 			sprintf(c, "  %s...", LNG(Advanced_Settings));
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
-#ifdef NETFS
-			sprintf(c, "  %s...", LNG(SMB_Config));
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-#endif
 			y += FONT_HEIGHT / 2;
 
 			snprintf(value, sizeof(value), "...");

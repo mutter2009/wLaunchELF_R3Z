@@ -28,7 +28,7 @@ static const char SMB_CHARSET[] =
 //---------------------------------------------------------------------------
 // 读取已有 SMB.CNF（首个共享）到缓冲区；找不到则留空
 //---------------------------------------------------------------------------
-static void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_connect)
+void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_connect)
 {
 	char *ram, *p, *k, *v;
 	const char *paths[3] = {
@@ -74,7 +74,7 @@ static void loadSMBConfig(char *name, char *url, char *user, char *pass, int *au
 //---------------------------------------------------------------------------
 // 把配置写入目标路径（SMB.CNF）：NAME/USERNAME/PASSWORD/URL
 //---------------------------------------------------------------------------
-static void saveSMBConfig(char *Message, const char *target_path,
+void saveSMBConfig(char *Message, const char *target_path,
                           const char *name, const char *url,
                           const char *user, const char *pass, int auto_connect)
 {
@@ -101,9 +101,11 @@ static void saveSMBConfig(char *Message, const char *target_path,
 		sprintf(line, "PASSWORD=%s\r\n", pass);
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
-		sprintf(line, "URL=%s\r\n", url);
-		genWrite(fd, line, strlen(line));
-		mcSync(0, NULL, &ret);
+		if (url != NULL && url[0] != '\0') {
+			sprintf(line, "URL=%s\r\n", url);
+			genWrite(fd, line, strlen(line));
+			mcSync(0, NULL, &ret);
+		}
 		sprintf(line, "AUTO=%d\r\n", auto_connect);
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
@@ -117,7 +119,7 @@ static void saveSMBConfig(char *Message, const char *target_path,
 //   返回 1 = 确认（接受），0 = 取消（还原）
 //   X:添加字符   □:删除上一个字符   O:确认   △:取消
 //---------------------------------------------------------------------------
-static int smbTextEntry(const char *title, char *buf, int maxlen)
+int smbTextEntry(const char *title, char *buf, int maxlen)
 {
 	int cur = 0;       // 字符面板光标
 	int len = (int)strlen(buf);

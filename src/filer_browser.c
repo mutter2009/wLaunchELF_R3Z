@@ -96,6 +96,10 @@ static const char *getRootDeviceLabel(const char *name)
 	if (!strcmp(name, "udpfs:"))
 		return "UDPFS 网络";
 #endif
+#ifdef NETFS
+	if (!strcmp(name, "SMB:"))
+		return "SMB 网络";
+#endif
 	if (!strcmp(name, LNG(MISC)))
 		return "其他";
 
