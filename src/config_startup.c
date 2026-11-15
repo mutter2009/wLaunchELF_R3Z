@@ -68,16 +68,53 @@ static int getConfigStartupItemY(int s)
 	return y;
 }
 
+/* Widest label on this page in display columns. Every colon and every
+ * value is rendered in the same column, matching the network settings. */
+static int startupLabelWidth(void)
+{
+	/* LNG() is a runtime table lookup, so assign element by element: an
+	 * aggregate initializer is not a constant expression in older C modes. */
+	const char *labels[16];
+	int n = 0, w = 0, i;
+
+	labels[n++] = LNG(Language);
+	labels[n++] = LNG(Pad_mapping);
+	labels[n++] = LNG(Initial_Delay);
+	labels[n++] = LNG(Default_Timeout);
+	labels[n++] = LNG(Reboot_IOP_loading_ELF);
+	labels[n++] = LNG(Virtual_Keyboard_Layout);
+	labels[n++] = LNG(USB_Keyboard_Used);
+	labels[n++] = LNG(USB_Keyboard_IRX);
+	labels[n++] = LNG(USB_Keyboard_Map);
+	labels[n++] = LNG(CNF_Path_override);
+	labels[n++] = LNG(Language_File);
+	labels[n++] = LNG(Font_File);
+	labels[n++] = LNG(ESR_ELF);
+	labels[n++] = LNG(OSDSYS_KELF);
+	labels[n++] = LNG(POPSTARTER_ELF);
+	labels[n++] = LNG(Hide_HDD);
+
+	for (i = 0; i < n; i++) {
+		int t = configLabelDisplayWidth(labels[i]);
+		if (t > w)
+			w = t;
+	}
+	return w;
+}
+
 void Config_Startup(void)
 {
 	int s, max_s = CONFIG_STARTUP_COUNT - 1;  //define cursor index and its max value
 	int x, y;
 	int len;
 	int event, post_event = 0;
+	int label_width;
 	char c[MAX_PATH];
+	char value[MAX_PATH];
 
 	event = 1;  //event = initial entry
 	s = CONFIG_STARTUP_FIRST;
+	label_width = startupLabelWidth();
 	while (1) {
 		//Pad response section
 		waitPadReady(0, 0);
@@ -217,79 +254,80 @@ void Config_Startup(void)
 			y += FONT_HEIGHT;
 			y += FONT_HEIGHT / 2;
 
-			configFormatLabelValue(c, sizeof(c), LNG(Language), getBuiltinLanguageNativeName(setting->language));
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Language), getBuiltinLanguageNativeName(setting->language), label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
 			if (setting->swapKeys)
-				sprintf(c, "  %s: \xFF"
+				snprintf(value, sizeof(value), "\xFF"
 				           "1:%s \xFF"
-				           "0:%s",
-				        LNG(Pad_mapping), LNG(OK), LNG(CANCEL));
+				           "0:%s", LNG(OK), LNG(CANCEL));
 			else
-				sprintf(c, "  %s: \xFF"
+				snprintf(value, sizeof(value), "\xFF"
 				           "0:%s \xFF"
-				           "1:%s",
-				        LNG(Pad_mapping), LNG(OK), LNG(CANCEL));
+				           "1:%s", LNG(OK), LNG(CANCEL));
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Pad_mapping), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			sprintf(c, "  %s: %d", LNG(Initial_Delay), setting->Init_Delay);
+			snprintf(value, sizeof(value), "%d", setting->Init_Delay);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Initial_Delay), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			sprintf(c, "  %s: %d", LNG(Default_Timeout), setting->timeout);
+			snprintf(value, sizeof(value), "%d", setting->timeout);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Default_Timeout), value, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			sprintf(c, "  %s: %s", LNG(Reboot_IOP_loading_ELF), (setting->reboot_iop_elf_load) ? LNG(ON): LNG(OFF));
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-			y += FONT_HEIGHT / 2;
-
-			configFormatLabelValue(c, sizeof(c), LNG(Virtual_Keyboard_Layout), getVirtualKeyboardLayoutDisplayName(setting->virtual_keyboard_layout));
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-
-			sprintf(c, "  %s: %s", LNG(USB_Keyboard_Used), (setting->usbkbd_used) ? LNG(ON): LNG(OFF));
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-
-			configFormatLabelValue(c, sizeof(c), LNG(USB_Keyboard_IRX), (strlen(setting->usbkbd_file) == 0) ? LNG(DEFAULT) : setting->usbkbd_file);
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-
-			configFormatLabelValue(c, sizeof(c), LNG(USB_Keyboard_Map), (strlen(setting->kbdmap_file) == 0) ? LNG(DEFAULT) : setting->kbdmap_file);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Reboot_IOP_loading_ELF), (setting->reboot_iop_elf_load) ? LNG(ON) : LNG(OFF), label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 			y += FONT_HEIGHT / 2;
 
-			configFormatLabelValue(c, sizeof(c), LNG(CNF_Path_override), (strlen(setting->CNF_Path) == 0) ? LNG(NONE) : setting->CNF_Path);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Virtual_Keyboard_Layout), getVirtualKeyboardLayoutDisplayName(setting->virtual_keyboard_layout), label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValue(c, sizeof(c), LNG(Language_File), (strlen(setting->lang_file) == 0) ? LNG(DEFAULT) : setting->lang_file);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(USB_Keyboard_Used), (setting->usbkbd_used) ? LNG(ON) : LNG(OFF), label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValue(c, sizeof(c), LNG(Font_File), (strlen(setting->font_file) == 0) ? LNG(DEFAULT) : setting->font_file);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(USB_Keyboard_IRX), (strlen(setting->usbkbd_file) == 0) ? LNG(DEFAULT) : setting->usbkbd_file, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 
-			configFormatLabelValue(c, sizeof(c), LNG(ESR_ELF), (strlen(setting->LK_Path[SETTING_LK_ESR]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_ESR]);
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-
-			configFormatLabelValue(c, sizeof(c), LNG(OSDSYS_KELF), (strlen(setting->LK_Path[SETTING_LK_OSDSYS]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_OSDSYS]);
-			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
-			y += FONT_HEIGHT;
-
-			configFormatLabelValue(c, sizeof(c), LNG(POPSTARTER_ELF), (strlen(setting->popstarter_file) == 0) ? LNG(DEFAULT) : setting->popstarter_file);
+			configFormatLabelValueAligned(c, sizeof(c), LNG(USB_Keyboard_Map), (strlen(setting->kbdmap_file) == 0) ? LNG(DEFAULT) : setting->kbdmap_file, label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 			y += FONT_HEIGHT / 2;
 
-			configFormatLabelValue(c, sizeof(c), LNG(Hide_HDD), getHideHddModeDisplayName(setting->Hide_Hdd));
+			configFormatLabelValueAligned(c, sizeof(c), LNG(CNF_Path_override), (strlen(setting->CNF_Path) == 0) ? LNG(NONE) : setting->CNF_Path, label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Language_File), (strlen(setting->lang_file) == 0) ? LNG(DEFAULT) : setting->lang_file, label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Font_File), (strlen(setting->font_file) == 0) ? LNG(DEFAULT) : setting->font_file, label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+
+			configFormatLabelValueAligned(c, sizeof(c), LNG(ESR_ELF), (strlen(setting->LK_Path[SETTING_LK_ESR]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_ESR], label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+
+			configFormatLabelValueAligned(c, sizeof(c), LNG(OSDSYS_KELF), (strlen(setting->LK_Path[SETTING_LK_OSDSYS]) == 0) ? LNG(DEFAULT) : setting->LK_Path[SETTING_LK_OSDSYS], label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+
+			configFormatLabelValueAligned(c, sizeof(c), LNG(POPSTARTER_ELF), (strlen(setting->popstarter_file) == 0) ? LNG(DEFAULT) : setting->popstarter_file, label_width);
+			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
+			y += FONT_HEIGHT;
+			y += FONT_HEIGHT / 2;
+
+			configFormatLabelValueAligned(c, sizeof(c), LNG(Hide_HDD), getHideHddModeDisplayName(setting->Hide_Hdd), label_width);
 			printXY(c, x, y, setting->color[COLOR_TEXT], TRUE, 0);
 			y += FONT_HEIGHT;
 

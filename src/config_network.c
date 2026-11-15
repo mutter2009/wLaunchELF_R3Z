@@ -7,10 +7,10 @@
 #include "netfs_compat.h"
 #endif
 
-/* Defaults for a fresh SMB.CNF. OPL's SMB setup uses the same share name and
- * guest account, so users migrating from OPL only need to check the IP. */
-#define NET_SMB_DEFAULT_SHARE "PS2SMB"
-#define NET_SMB_DEFAULT_USER  "GUEST"
+/* No default share name or account. Most PS2 SMB shares are anonymous and
+ * the share name is always user-specific, so inventing "PS2SMB"/"GUEST"
+ * silently wrote a wrong USERNAME= into SMB.CNF and made libsmb2 attempt
+ * an authenticated session instead of an anonymous one. */
 
 //---------------------------------------------------------------------------
 // Network settings GUI by Slam-Tilt
@@ -223,8 +223,19 @@ static void netBuildSmbUrl(char *url, size_t url_sz, const char *host,
 {
 	int p = atoi(port);
 
-	if (host[0] == '\0' || share[0] == '\0') {
+	if (host[0] == '\0') {
 		url[0] = '\0';
+		return;
+	}
+	/* A share-less URL is still written to SMB.CNF so the server address
+	 * survives a save/reload. loadSMB2CNF() refuses to mount it (no share
+	 * to tree-connect to), which is exactly what we want until the user
+	 * fills in the share name. */
+	if (share[0] == '\0') {
+		if (p > 0 && p != 445)
+			snprintf(url, url_sz, "smb://%s:%d/", host, p);
+		else
+			snprintf(url, url_sz, "smb://%s/", host);
 		return;
 	}
 	if (p > 0 && p != 445)
@@ -309,18 +320,14 @@ void Config_Network(void)
 	loadSMBConfig(smb_name, smb_url, smb_user, smb_pass, &smb_auto);
 	netSplitSmbUrl(smb_url, smb_host, sizeof(smb_host),
 	               smb_port, sizeof(smb_port), smb_share, sizeof(smb_share));
-	/* No SMB.CNF yet: default the server to the gateway shown above, and use
-	 * the same share/account defaults OPL uses, so a valid smb:// URL can
-	 * actually be generated without forcing the user to fill every field. */
+	/* No SMB.CNF yet: default only the server (to the gateway shown above)
+	 * and the port. Share name, user and password stay empty: the share is
+	 * always user-specific and most PS2 shares are anonymous. */
 	if (smb_host[0] == '\0')
 		snprintf(smb_host, sizeof(smb_host), "%d.%d.%d.%d",
 		         ipdata.gw[0], ipdata.gw[1], ipdata.gw[2], ipdata.gw[3]);
 	if (smb_port[0] == '\0')
 		snprintf(smb_port, sizeof(smb_port), "445");
-	if (smb_share[0] == '\0')
-		snprintf(smb_share, sizeof(smb_share), "%s", NET_SMB_DEFAULT_SHARE);
-	if (smb_user[0] == '\0')
-		snprintf(smb_user, sizeof(smb_user), "%s", NET_SMB_DEFAULT_USER);
 #endif
 
 	while (1) {
@@ -397,11 +404,9 @@ void Config_Network(void)
 				} else if (s == CONFIG_NET_SMB_AUTO) {
 					smb_auto = smb_auto ? 0 : 1;
 				} else if (s == CONFIG_NET_SMB_RECONNECT) {
-					netfs_reconnect();
-					/* netfs_reconnect() always returns 0, so the real result
-					 * is the number of shares libsmb2 actually mounted. */
+					int rc = netfs_reconnect();
 					snprintf(NetMsg, sizeof(NetMsg), "%s",
-					         smb2_mount_count() > 0 ? LNG(SMB_Connected) : LNG(SMB_ConnectFailed));
+					         rc == 0 ? LNG(SMB_Connected) : LNG(SMB_ConnectFailed));
 #endif
 				} else if (s == CONFIG_NET_SAVE) {
 					save_target = configSaveTargetPrompt(save_override_path, save_cwd_path, save_sysconf_path, LoadedIPConfigPath, has_override_path);

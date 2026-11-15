@@ -44,6 +44,11 @@ char netConfig[IPCONF_MAX_LEN + 64];  //Adjust size as needed
 u8 mx4sio_driver_running = 0;
 #endif
 
+#ifdef NETFS
+extern int netfs_autostart_enabled(void);
+extern int init_netfs(void);
+#endif
+
 u8 console_is_PSX = 0;
 u8 boot_show_all_devices = 0;
 
@@ -143,6 +148,14 @@ int main(int argc, char *argv[])
 	//Here nearly everything is ready for the main menu event loop
 	//But before we start that, we need to validate CNF_Path
 	validateConfiguredCnfPath();
+
+#ifdef NETFS
+	/* netfs_autostart_enabled() was defined but never called: AUTO=1 in
+	 * SMB.CNF had no effect. Honour it here; when AUTO=0 the stack is
+	 * still brought up lazily on first access to SMB:/nfs:. */
+	if (netfs_autostart_enabled())
+		init_netfs();
+#endif
 
 	RunPath[0] = 0;  //Nothing to run yet
 	cdmode = -1;     //flag unchecked cdmode state

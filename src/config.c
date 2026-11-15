@@ -108,7 +108,11 @@ void configFormatLabelValueAligned(char *dst, size_t dst_size, const char *label
 	if (pad_spaces < 0)
 		pad_spaces = 0;
 
-	prefix_len = snprintf(dst, dst_size, "  %s: %*s", label ? label : "", pad_spaces, "");
+	/* Right-align the label so the colon and the value of every row start
+	 * in the same column. Padding *after* the label aligned the values but
+	 * left the colons ragged, which is what the classic Chinese build
+	 * avoided by padding in front of the label instead. */
+	prefix_len = snprintf(dst, dst_size, "  %*s%s: ", pad_spaces, "", label ? label : "");
 	if (prefix_len < 0 || prefix_len >= (int)dst_size) {
 		dst[dst_size - 1] = '\0';
 		return;

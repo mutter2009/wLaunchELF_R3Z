@@ -125,6 +125,14 @@ void loadSMBConfig(char *name, char *url, char *user, char *pass, int *auto_conn
 	url[SMB_URL_MAX - 1] = '\0';
 	user[SMB_USER_MAX - 1] = '\0';
 	pass[SMB_PASS_MAX - 1] = '\0';
+
+	/* The previous build wrote "GUEST" as a default account. If no password
+	 * was ever set alongside it, that value is a phantom, not a credential:
+	 * drop it so upgrading does not keep showing a username nobody entered.
+	 * A real GUEST account with a password is left untouched. */
+	if (!stricmp(user, "GUEST") && pass[0] == '\0')
+		user[0] = '\0';
+
 	free(ram);
 }
 
@@ -161,11 +169,12 @@ int saveSMBConfig(char *Message, const char *target_path,
 		sprintf(line, "PASSWORD=%s\r\n", pass);
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
-		if (url != NULL && url[0] != '\0') {
-			sprintf(line, "URL=%s\r\n", url);
-			genWrite(fd, line, strlen(line));
-			mcSync(0, NULL, &ret);
-		}
+		/* Always write URL=, even when it is empty. loadSMB2CNF() skips
+		 * empty/invalid URLs safely, while loadSMBConfig() needs the line
+		 * to exist so re-entering the page never loses the server address. */
+		sprintf(line, "URL=%s\r\n", (url != NULL) ? url : "");
+		genWrite(fd, line, strlen(line));
+		mcSync(0, NULL, &ret);
 		sprintf(line, "AUTO=%d\r\n", auto_connect);
 		genWrite(fd, line, strlen(line));
 		mcSync(0, NULL, &ret);
@@ -441,15 +450,15 @@ void Config_SMB(void)
 //---------------------------------------------------------------------------
 int netfs_autostart_enabled(void)
 {
-	char *ram, *p, *k, *v;
-	const char *paths[3] = {
-	    "mc0:/SYS-CONF/SMB.CNF",
-	    "mc1:/SYS-CONF/SMB.CNF",
-	    "mass:/SYS-CONF/SMB.CNF"};
-	int i;
+	char *ram = NULL, *p, *k, *v;
+	static char paths[SMB_CNF_CANDIDATES][MAX_PATH];
+	int i, n;
 
-	for (i = 0; i < 3; i++) {
-		ram = preloadCNF((char *)paths[i]);
+	/* Use the same candidate list as the settings page, otherwise AUTO=1
+	 * is invisible when SMB.CNF was saved outside SYS-CONF. */
+	n = smbConfigCandidatePaths(paths);
+	for (i = 0; i < n; i++) {
+		ram = preloadCNF(paths[i]);
 		if (ram)
 			break;
 	}

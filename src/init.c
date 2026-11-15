@@ -505,16 +505,25 @@ int init_netfs(void)
 
 int netfs_reconnect(void)
 {
-	/* Drop existing SMB2/NFS mounts, then re-read SMB.CNF / NFS.CNF and
-	 * re-mount the shares. The EE network stack (netman/ps2ip) is left up,
-	 * so init_smb2()/init_nfs() skip re-initialising it. */
-	extern void deinit_smb2(void);
+	/* Do NOT call init_smb2()/init_nfs() here: init_smb2() waits for the
+	 * Ethernet link again (ethWaitValidNetIFLinkState, up to 10s) and the
+	 * repeated NetMan/ps2ip re-entry from inside the settings GUI is what
+	 * made "Reconnect" appear to freeze the console. The stack is already
+	 * up, so only tear down and re-read the CNF files. */
 	extern void deinit_nfs(void);
-	deinit_smb2();
+	extern int smb2_reload(void);
+	extern int smb2_mount_count(void);
+	int mounted;
+
+	if (!netfs_net_inited) {
+		init_netfs();
+		return (smb2_mount_count() > 0) ? 0 : -1;
+	}
+
 	deinit_nfs();
-	init_smb2(ip, netmask, gw);
+	mounted = smb2_reload();  /* deinit_smb2() + re-read SMB.CNF */
 	init_nfs(ip, netmask, gw);
-	return 0;
+	return (mounted > 0) ? 0 : -1;
 }
 #endif
 //---------------------------------------------------------------------------

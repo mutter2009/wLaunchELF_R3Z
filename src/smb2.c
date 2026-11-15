@@ -131,10 +131,20 @@ static int loadSMB2CNF(char *path)
                         }
                         smb2_share->url = strdup(value);
                         smb2_share->smb2 = smb2 = smb2_init_context();
-                        smb2_set_user(smb2, smb2_share->user);
-                        smb2_set_password(smb2, smb2_share->password);
+                        /* Always set an explicit user, even "": otherwise
+                         * libsmb2 falls back to getlogin_r() and may use a
+                         * bogus user pointer. Never set an EMPTY password:
+                         * with password==NULL libsmb2 does an anonymous
+                         * session setup, while password="" forces the
+                         * NTLMv2 hash / guest path that hangs on anonymous
+                         * shares. This was the "Reconnect freezes" bug. */
+                        smb2_set_user(smb2, (smb2_share->user && smb2_share->user[0]) ?
+                                             smb2_share->user : "");
+                        if (smb2_share->password && smb2_share->password[0])
+                                smb2_set_password(smb2, smb2_share->password);
                         url = smb2_parse_url(smb2, smb2_share->url);
-                        if (url == NULL || url->server == NULL || url->share == NULL) {
+                        if (url == NULL || url->server == NULL || url->share == NULL ||
+                            url->share[0] == '\0') {
                                 DPRINTF("invalid SMB URL: %s (%s)\n", value, smb2_get_error(smb2));
                                 if (url != NULL)
                                         smb2_destroy_url(url);
@@ -143,11 +153,16 @@ static int loadSMB2CNF(char *path)
                                 continue;
                         }
                         if (smb2_connect_share(smb2, url->server, url->share,
-                                               smb2_share->user) < 0) {
+                                               (smb2_share->user && smb2_share->user[0]) ?
+                                                   smb2_share->user : "") < 0) {
                                 DPRINTF("failed to connect to : //%s/%s %s\n",
                                            url->server, url->share,
                                            smb2_get_error(smb2));
-                                free(smb2_share);
+                                smb2_destroy_url(url);
+                                /* free_smb2_share() disconnects and destroys
+                                 * the context too. A plain free() leaked one
+                                 * context per failed reconnect. */
+                                free_smb2_share(smb2_share);
                                 smb2_share = NULL;
                                 continue;
                         }
@@ -176,6 +191,73 @@ void deinit_smb2(void)
         }
 }
 
+/* Look for SMB.CNF everywhere the settings page can write it, not only in
+ * the three hard-coded SYS-CONF folders. A file saved next to IPCONFIG.DAT
+ * on mass: was invisible after a reboot. */
+static int smb2LoadAllCNF(void)
+{
+	static const char * const fixed[] = {
+		"mc0:/SYS-CONF/SMB.CNF",
+		"mc1:/SYS-CONF/SMB.CNF",
+		"mass:/SYS-CONF/SMB.CNF",
+		"mass:/SMB.CNF",
+		"mc0:/SMB.CNF"
+	};
+	char path[MAX_PATH];
+	char tmp[MAX_PATH];
+	const char *dir;
+	char *slash;
+	int rc, i;
+
+	if (LoadedIPConfigPath[0] != '\0') {
+		snprintf(tmp, sizeof(tmp), "%s", LoadedIPConfigPath);
+		slash = strrchr(tmp, '/');
+		if (slash != NULL) {
+			slash[1] = '\0';
+			snprintf(path, sizeof(path), "%sSMB.CNF", tmp);
+			rc = loadSMB2CNF(path);
+			if (rc > 0)
+				return rc;
+		}
+	}
+
+	if (setting != NULL && setting->CNF_Path[0] != '\0') {
+		snprintf(tmp, sizeof(tmp), "%s", setting->CNF_Path);
+		slash = strrchr(tmp, '/');
+		if (slash != NULL) {
+			slash[1] = '\0';
+			snprintf(path, sizeof(path), "%sSMB.CNF", tmp);
+			rc = loadSMB2CNF(path);
+			if (rc > 0)
+				return rc;
+		}
+	}
+
+	dir = LaunchElfBootDir[0] ? LaunchElfBootDir : LaunchElfDir;
+	if (dir[0] != '\0') {
+		snprintf(path, sizeof(path), "%s%sSMB.CNF", dir,
+		         (dir[strlen(dir) - 1] == '/') ? "" : "/");
+		rc = loadSMB2CNF(path);
+		if (rc > 0)
+			return rc;
+	}
+
+	for (i = 0; i < (int)(sizeof(fixed) / sizeof(fixed[0])); i++) {
+		rc = loadSMB2CNF((char *)fixed[i]);
+		if (rc > 0)
+			return rc;
+	}
+	return 0;
+}
+
+/* Re-read SMB.CNF without re-initialising NetMan/ps2ip and without
+ * waiting for the Ethernet link a second time. */
+int smb2_reload(void)
+{
+	deinit_smb2();
+	return smb2LoadAllCNF();
+}
+
 int init_smb2(const char *ip, const char *netmask, const char *gw)
 {
 	struct ip4_addr IP, NM, GW;
@@ -202,13 +284,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	}
 	DPRINTF("Network Initialized\n");
         
-        rc = loadSMB2CNF("mc0:/SYS-CONF/SMB.CNF");
-        if (!rc) {
-                rc = loadSMB2CNF("mc1:/SYS-CONF/SMB.CNF");
-        }
-        if (!rc) {
-                rc = loadSMB2CNF("mass:/SYS-CONF/SMB.CNF");
-        }
+	rc = smb2LoadAllCNF();
 	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 
         return rc;
