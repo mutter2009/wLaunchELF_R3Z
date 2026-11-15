@@ -18,6 +18,19 @@
 #include <smb2.h>
 #include <filer_shared.h>
 
+/* PS2SDK's ports copy of <smb2/libsmb2.h> is installed without its
+ * companion protocol header <smb2/smb2.h>. Two symbols referenced by its
+ * prototypes (SMB2_GUID_SIZE, smb2_lease_key) are therefore undefined and
+ * modern PS2 GCC treats that as a hard error. Supply the exact upstream
+ * definitions here; they are only used in prototypes this file never calls. */
+#ifndef SMB2_GUID_SIZE
+#define SMB2_GUID_SIZE 16
+#endif
+#ifndef SMB2_LEASE_KEY_SIZE
+#define SMB2_LEASE_KEY_SIZE 16
+typedef uint8_t smb2_lease_key[SMB2_LEASE_KEY_SIZE];
+#endif
+
 #include <smb2/libsmb2.h>
 
 struct smb2_share *smb2_shares = NULL;
@@ -158,9 +171,9 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 		sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
 		IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
 		sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], &ip4[3]);
+		IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], ip4[3]);
 		sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], &ip4[3]);
+		IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], ip4[3]);
 		ps2ipInit(&IP, &NM, &GW);
 		netfs_net_inited = 1;
 	}
