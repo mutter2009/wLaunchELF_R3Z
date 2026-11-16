@@ -38,6 +38,11 @@
 #include <smb2.h>
 #include <filer_shared.h>
 
+/* fix18c: the PS2SDK's libsmb2.h uses SMB2_GUID_SIZE (line 461) and the
+ * smb2_lease_key type (line 726) but does not include the header that defines
+ * them (smb2/smb2.h). Newer GCC errors out on this. Include it first so the
+ * two symbols are declared before libsmb2.h uses them. */
+#include <smb2/smb2.h>
 #include <smb2/libsmb2.h>
 
 #define discard_const(ptr) ((void *)((intptr_t)(ptr)))
