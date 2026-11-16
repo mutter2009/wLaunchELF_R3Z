@@ -4,11 +4,14 @@
 #include "launchelf.h"
 
 #ifdef NETFS
-/* fix14: NETFS_ASYNC_CONNECTING == 1 (netfs_compat.h). During a background
- * SMB LOGON the worker owns the single SIF RPC channel; USB-keyboard reads
- * (PS2KbdRead) would contend on it and wedge input. Gamepad reads use the pad
- * DMA buffer and stay responsive, so skip only the keyboard path. */
-extern volatile int netfs_async_state;
+/* fix20: skip USB-keyboard reads while a NETFS worker THREAD is alive, not
+ * merely while state==CONNECTING. A watchdog timeout flips state to DONE but
+ * the worker can still be stuck holding the single SIF RPC channel; trusting
+ * state alone re-enables PS2KbdRead()->fileXio/SIF, which queues behind the
+ * stuck worker and wedges ALL input (even the DMA gamepad) a few seconds
+ * after "connect failed" appears. Gamepad reads use the pad DMA buffer and
+ * stay responsive, so skip only the keyboard path for the worker lifetime. */
+extern volatile int netfs_async_worker_busy;
 #endif
 
 static char padBuf_t[2][256] __attribute__((aligned(64)));
@@ -277,9 +280,11 @@ int readpad(void)
 		return ret;
 
 #ifdef NETFS
-	/* fix14: do not touch the USB keyboard (SIF RPC) while the SMB worker
-	 * is doing LOGON — that contention froze all input on "正在启动". */
-	if (netfs_async_state == 1) /* NETFS_ASYNC_CONNECTING */
+	/* fix20: skip the USB keyboard (SIF RPC) for the whole worker lifetime.
+	 * Checking state==CONNECTING was wrong: the watchdog sets state=DONE on
+	 * timeout while a stuck worker still owns SIF, so a keyboard read here
+	 * blocked the main loop and killed gamepad input a few seconds later. */
+	if (netfs_async_worker_busy)
 		return ret;
 #endif
 

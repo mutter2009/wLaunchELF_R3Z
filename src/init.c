@@ -152,6 +152,14 @@ static void load_ps2ip(void);
  * The worker owns smb2_shares / smb2_last_error / smb2_status_msg while
  * state == CONNECTING; the GUI only reads them once state == DONE. */
 volatile int netfs_async_state = NETFS_ASYNC_IDLE;
+/* fix20: TRUE for the entire lifetime of a connect worker THREAD, cleared
+ * only when the worker actually returns (not when the watchdog flips state
+ * to DONE). pad.c uses this instead of state==CONNECTING to decide whether
+ * USB-keyboard SIF reads are safe: a watchdog timeout marks state DONE but
+ * the worker can still be stuck holding the single SIF channel. If pad.c
+ * trusted state alone it would start reading the keyboard -> fileXio/SIF,
+ * queue behind the stuck worker and freeze ALL input (gamepad included). */
+volatile int netfs_async_worker_busy = 0;
 volatile int netfs_async_generation = 0;
 volatile unsigned int netfs_async_started_at = 0;
 /* fix16: set by the watchdog when a connect is force-timed-out. The GUI uses
@@ -205,6 +213,10 @@ static void netfsAsyncThread(void *arg)
 		netfs_async_generation++;
 		netfs_async_state = NETFS_ASYNC_DONE;
 	}
+	/* fix20: the SIF channel is free again only now that this worker is
+	 * really returning. This is what re-enables USB-keyboard reads in pad.c
+	 * (state may already be DONE from the watchdog while we were stuck). */
+	netfs_async_worker_busy = 0;
 	ExitDeleteThread();
 }
 
@@ -249,6 +261,9 @@ int netfs_connect_async(int reload)
 		free(stack);
 		return -1;
 	}
+	/* fix20: mark the worker as owning SIF from the moment it starts.
+	 * Cleared by netfsAsyncThread() when it truly returns. */
+	netfs_async_worker_busy = 1;
 	StartThread(tid, NULL);
 	return 0;
 }

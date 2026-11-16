@@ -249,6 +249,15 @@ static int loadSMB2CNF(char *path)
 		} else if (!strcmp(name, "URL")) {
 			struct smb2_context *smb2;
 			struct smb2_url *url;
+			/* fix20: OPL / SMB2FM / wLE's own SMB_test.c all substitute
+			 * GUEST for an EMPTY username — libsmb2 stalls NTLM session
+			 * setup on many Samba/router shares with an empty user, which
+			 * is why identical settings connect in OPL but fail here.
+			 * Connection-layer fallback ONLY: the settings UI and SMB.CNF
+			 * keep the field empty (no forced GUEST default). */
+			const char *connect_user =
+			    (smb2_share->user && smb2_share->user[0])
+			    ? smb2_share->user : "GUEST";
 
 			if (smb2_share->name == NULL)
 				smb2_share->name = strdup("SMB");
@@ -271,8 +280,9 @@ static int loadSMB2CNF(char *path)
 			}
 			/* fix17: bound every command (socket connect included). */
 			smb2_set_timeout(smb2, SMB2_COMMAND_TIMEOUT_SEC);
-			smb2_set_user(smb2, smb2_share->user);
-			smb2_set_password(smb2, smb2_share->password);
+			smb2_set_user(smb2, connect_user);
+			smb2_set_password(smb2, smb2_share->password
+			                  ? smb2_share->password : "");
 			url = smb2_parse_url(smb2, smb2_share->url);
 			if (url == NULL) {
 				smb2_last_error = SMB2_ERR_NO_SHARE;
@@ -293,7 +303,7 @@ static int loadSMB2CNF(char *path)
 				continue;
 			}
 			if (smb2_connect_share(smb2, url->server, url->share,
-			                       smb2_share->user) < 0) {
+			                       connect_user) < 0) {
 				DPRINTF("failed to connect to : //%s/%s %s\n",
 				        url->server, url->share, smb2_get_error(smb2));
 				smb2_destroy_url(url);

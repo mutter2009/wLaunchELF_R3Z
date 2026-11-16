@@ -74,6 +74,10 @@ enum {
 };
 extern volatile int netfs_async_state;
 extern volatile int netfs_async_generation;
+/* fix20: TRUE while a connect worker thread is alive (cleared only when the
+ * worker really returns). pad.c uses this to skip USB-keyboard SIF reads: a
+ * watchdog timeout flips state to DONE but the worker may still hold SIF. */
+extern volatile int netfs_async_worker_busy;
 
 /* fix14: timestamp (seconds, via time(NULL)) of the last connect request.
  * The GUI watchdog uses it to break out of a LOGON that never returns, so
