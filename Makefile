@@ -177,9 +177,12 @@ ifeq ($(ETH),1)
     EE_OBJS += ps2smap_irx.o ps2ftpd_irx.o ps2host_irx.o ps2netfs_irx.o ps2ip_irx.o
     EE_CFLAGS += -DETH
 ifeq ($(NETFS),1)
-    EE_OBJS += smb2.o nfs.o netman_irx.o netfs_shim.o
+    # smbman_irx.o embeds the SMB1 (CIFS) client that now backs SMB:
+    # (same driver Open PS2 Loader uses). libsmb2 is no longer linked:
+    # the smb2.c backend is implemented entirely with smbman devctl + fileXio.
+    EE_OBJS += smb2.o nfs.o netman_irx.o netfs_shim.o smbman_irx.o
     EE_CFLAGS += -DNETFS
-    EE_LIBS += -lsmb2 -lnfs -lps2ip -lnetman
+    EE_LIBS += -lnfs -lps2ip -lnetman
     HAS_ETH = -ETH
 endif
 ifeq ($(UDPFS),1)

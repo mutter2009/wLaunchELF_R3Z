@@ -18,6 +18,7 @@ IMPORT_BIN2C(ps2ftpd_irx);
 
 #ifdef NETFS
 IMPORT_BIN2C(netman_irx);
+IMPORT_BIN2C(smbman_irx);   /* SMB1 (CIFS) client used by the smb: device */
 #endif
 
 #ifdef UDPFS
@@ -142,6 +143,7 @@ static int vmcman_last_error = 0;
 #include <smb2.h>
 #include <nfs.h>
 static u8 have_netman = 0;
+static u8 have_smbman = 0;
 
 /* OPL-style background SMB connect state (declared in netfs_compat.h).
  * The worker owns smb2_shares / smb2_last_error / smb2_status_msg while
@@ -552,6 +554,29 @@ static void load_ps2ip(void)
 //------------------------------
 //endfunc load_ps2ip
 //---------------------------------------------------------------------------
+
+#ifdef NETFS
+/* SMB1 client: loads the smbman IOP module which registers the "smb"
+ * (smb0:) device. smbman has its own keepalive and re-login logic, which is
+ * why it stays connected where the old libsmb2 client froze. Must run after
+ * DEV9/NETMAN/SMAP/PS2IP are up (load_ps2ip), and before any LOGON/OPENSHARE
+ * devctl issued from init_smb2(). setupPowerOff() mirrors upstream wLE and
+ * avoids a stall the first time the smb: browser is opened. */
+static void load_smbman(void)
+{
+	int ret, ID __attribute__((unused));
+
+	if (have_smbman)
+		return;
+	setupPowerOff();
+	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
+	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
+	have_smbman = (ID >= 0 && ret >= 0);
+}
+#endif
+//------------------------------
+//endfunc load_smbman
+//---------------------------------------------------------------------------
 #ifdef NETFS
 int init_netfs(void)
 {
@@ -578,6 +603,8 @@ int init_netfs(void)
 		DPRINTF(" [NETFS]: network stack unavailable, aborting\n");
 		return -1;
 	}
+	/* Load the SMB1 client driver before init_smb2() issues LOGON/OPENSHARE. */
+	load_smbman();
 	init_smb2(ip, netmask, gw);
 	return 0;
 }
