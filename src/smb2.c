@@ -66,6 +66,8 @@ int netfs_net_inited = 0;
 #define discard_const(ptr) ((void *)((intptr_t)(ptr)))
 
 static struct smb2_share *smb2_find_share(const char *name);
+static void find_share(const char *path, char **name, char **p,
+                       struct smb2_share **share);
 
 /* ---- link-state wait (unchanged behaviour: bounded, never hangs the GUI) -- */
 static void EthStatusCheckCb(s32 alarm_id, u16 time, void *common)
@@ -232,7 +234,7 @@ static int smb1_parse_url(const char *url, char *server, size_t server_sz,
 {
 	const char *host = url;
 	const char *slash;
-	const char *colon;
+	char *colon;
 	char hostbuf[128];
 
 	server[0] = '\0';
