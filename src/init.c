@@ -156,6 +156,11 @@ static void load_smbman(void);
 volatile int netfs_async_state = NETFS_ASYNC_IDLE;
 volatile int netfs_async_generation = 0;
 volatile unsigned int netfs_async_started_at = 0;
+/* fix16: set by the watchdog when a connect is force-timed-out. The GUI uses
+ * it to swallow that generation bump so it does NOT re-list the SMB directory
+ * (setFileList -> fileXio would queue behind the still-stuck LOGON and freeze
+ * the whole browser, including pad input). The error text is already shown. */
+volatile int netfs_async_watchdog_fired = 0;
 static int netfs_async_reload = 0;
 static int netfs_async_gen_at_start = 0;
 /* fix15: one stack per worker. A watchdog-timed-out worker may still be stuck
@@ -263,6 +268,11 @@ void netfs_async_watchdog(void)
 
 	smb2_last_error = SMB2_ERR_CONNECT;
 	snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", LNG(SMB_Err_Connect));
+	/* fix16: mark this as a watchdog timeout. consume_completion() will hide
+	 * the generation bump so the browser does not re-enter setFileList() —
+	 * the worker may still be stuck in fileXio and a second RPC there would
+	 * freeze the main loop again. The status/error line is already updated. */
+	netfs_async_watchdog_fired = 1;
 	netfs_async_generation++;
 	netfs_async_state = NETFS_ASYNC_DONE;
 }
@@ -273,6 +283,13 @@ int netfs_async_consume_completion(void)
 
 	if (netfs_async_generation != seen_generation) {
 		seen_generation = netfs_async_generation;
+		/* A watchdog-forced DONE must not re-list the directory: the worker
+		 * can still own the SIF/fileXio channel, and a listing here would
+		 * block the GUI thread forever (pad input dies with it). */
+		if (netfs_async_watchdog_fired) {
+			netfs_async_watchdog_fired = 0;
+			return 0;
+		}
 		return 1;
 	}
 	return 0;

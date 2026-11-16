@@ -25,6 +25,11 @@
 #include <netman.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
 #include <ps2ip.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -161,6 +166,69 @@ static int smb1_build_logon(struct smb2_share *s, smbLogOn_in_t *logon,
 	return 0;
 }
 
+/* fix16: quick TCP reachability probe before the SMB LOGON.
+ *
+ * smbman's fileXioDevctl(SMB_DEVCTL_LOGON) has no timeout: when the host is
+ * down / the port is closed / the address is wrong it can block the IOP fileXio
+ * RPC for minutes. That single stuck RPC wedges the shared SIF channel, so the
+ * browser's re-listing AND padRead() both stall — the UI shows the watchdog
+ * error but no button works. Probing the TCP port first with a bounded,
+ * non-blocking connect lets us fail fast in that case and never enter the
+ * blocking LOGON at all, so the interface stays responsive.
+ *
+ * Returns 1 = reachable (or a non-numeric host we cannot probe here),
+ *         0 = definitively unreachable within the timeout. */
+#define SMB1_PROBE_TIMEOUT_MS 2500
+static int smb1_server_reachable(const char *server, int port)
+{
+	struct sockaddr_in addr;
+	struct timeval tv;
+	fd_set wfds;
+	socklen_t errlen;
+	int fd, flags, rc, err;
+
+	if (server == NULL || server[0] == '\0')
+		return 0;
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons((unsigned short)((port > 0 && port < 65536) ? port : 445));
+	addr.sin_addr.s_addr = inet_addr(server);
+	/* Hostname (not a dotted quad): let smbman resolve it, do not probe. */
+	if (addr.sin_addr.s_addr == INADDR_NONE)
+		return 1;
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0)
+		return 1; /* socket unavailable: don't block LOGON on this account */
+
+	flags = fcntl(fd, F_GETFL, 0);
+	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+	if (rc < 0) {
+		fd_set rfds;
+		FD_ZERO(&rfds);
+		FD_ZERO(&wfds);
+		FD_SET(fd, &rfds);
+		FD_SET(fd, &wfds);
+		tv.tv_sec = SMB1_PROBE_TIMEOUT_MS / 1000;
+		tv.tv_usec = (SMB1_PROBE_TIMEOUT_MS % 1000) * 1000;
+		rc = select(fd + 1, &rfds, &wfds, NULL, &tv);
+		if (rc <= 0) { /* timeout or select error */
+			close(fd);
+			return 0;
+		}
+	}
+
+	/* Distinguish a real connection from a deferred connect error. */
+	err = 0;
+	errlen = sizeof(err);
+	getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+	close(fd);
+	return (err == 0);
+}
+
 /* LOGON to a server if it is not the one already logged on. */
 static int smb1_logon(struct smb2_share *s)
 {
@@ -170,6 +238,16 @@ static int smb1_logon(struct smb2_share *s)
 
 	if (strcmp(smb1_active_server, s->server) == 0)
 		return 0; /* already logged on to this server */
+
+	/* fix16: never enter the unbounded LOGON devctl when the TCP port is
+	 * unreachable — that is what wedged the SIF channel and froze input. */
+	if (!smb1_server_reachable(s->server, s->port)) {
+		DPRINTF("smb1: %s:%d unreachable (TCP probe), skipping LOGON\n",
+		        s->server, s->port);
+		smb1_reset_session();
+		smb2_last_error = SMB2_ERR_CONNECT;
+		return -1;
+	}
 
 	smb1_build_logon(s, &logon, &openshare);
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGON, &logon, sizeof(logon), NULL, 0);
