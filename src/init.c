@@ -1,6 +1,7 @@
 #include "launchelf.h"
 #include "init.h"
 #include <unistd.h>
+#include <time.h>
 #include <iopcontrol_special.h>
 
 #define IMPORT_BIN2C(_n) \
@@ -145,27 +146,55 @@ static int vmcman_last_error = 0;
 static u8 have_netman = 0;
 static u8 have_smbman = 0;
 
+/* fix14 forward declarations (definitions remain further down, unchanged). */
+static void load_ps2ip(void);
+static void load_smbman(void);
+static int netfsPrepareStack(void);
+
 /* OPL-style background SMB connect state (declared in netfs_compat.h).
  * The worker owns smb2_shares / smb2_last_error / smb2_status_msg while
  * state == CONNECTING; the GUI only reads them once state == DONE. */
 volatile int netfs_async_state = NETFS_ASYNC_IDLE;
 volatile int netfs_async_generation = 0;
+volatile unsigned int netfs_async_started_at = 0;
 static int netfs_async_reload = 0;
+static int netfs_async_gen_at_start = 0;
 static unsigned char netfs_async_stack[96 * 1024] __attribute__((aligned(16)));
 
-/* Runs off the GUI thread. libsmb2's smb2_connect_share() is synchronous with
- * no usable timeout, so it must never execute in the browser/main loop. */
+/* fix14 deadlock root cause (netfsPrepareStack is defined after load_smbman):
+ * SifExecModuleBuffer()/fileXioDevctl() and libpad's padRead() all share the
+ * single SIF RPC channel. Running IOP module loads on a worker EE thread while
+ * the GUI thread keeps calling padRead() caused SIF RPCs to interleave and
+ * wedge both sides — the screen kept rendering the clock but no input worked,
+ * stuck on "正在启动 SMB 网络...".
+ *
+ * Fix: do ALL IOP module loading / network stack bring-up synchronously on the
+ * GUI thread before the worker starts. The worker then only performs the
+ * blocking LOGON/OPENSHARE devctl (SMB.CNF parsing), with no SifExecModuleBuffer
+ * calls, and the GUI watchdog bounds how long we wait for it. */
+
+/* Runs off the GUI thread. Only the blocking share mount happens here; all
+ * IOP module loading was already done by netfsPrepareStack() on the caller. */
 static void netfsAsyncThread(void *arg)
 {
+	int started_gen;
+
 	(void)arg;
+	started_gen = netfs_async_gen_at_start;
 
 	if (netfs_async_reload)
 		smb2_reload();
 	else
-		init_netfs();
+		init_smb2(ip, netmask, gw); /* stack already up: skip init_netfs() */
 
-	netfs_async_generation++;
-	netfs_async_state = NETFS_ASYNC_DONE;
+	/* Only the worker that still owns the current connect may publish DONE.
+	 * If the watchdog already fired (or a newer connect replaced us), our
+	 * result is stale — never overwrite the newer state. */
+	if (started_gen == netfs_async_generation &&
+	    netfs_async_state == NETFS_ASYNC_CONNECTING) {
+		netfs_async_generation++;
+		netfs_async_state = NETFS_ASYNC_DONE;
+	}
 	ExitDeleteThread();
 }
 
@@ -179,7 +208,17 @@ int netfs_connect_async(int reload)
 	if (netfs_async_state == NETFS_ASYNC_CONNECTING)
 		return 0;
 
+	/* Bring up DEV9/NETMAN/PS2IP/SMAP/smbman on the GUI thread, synchronously.
+	 * These are short SifExecModuleBuffer calls; running them before pad input
+	 * resumes avoids SIF RPC interleaving with the input loop. */
+	if ((!reload || !netfs_net_inited) && netfsPrepareStack() < 0) {
+		netfs_async_state = NETFS_ASYNC_DONE;
+		return -1;
+	}
+
 	netfs_async_reload = reload;
+	netfs_async_gen_at_start = netfs_async_generation;
+	netfs_async_started_at = (unsigned int)time(NULL);
 	netfs_async_state = NETFS_ASYNC_CONNECTING;
 
 	th.func = netfsAsyncThread;
@@ -197,6 +236,23 @@ int netfs_connect_async(int reload)
 	}
 	StartThread(tid, NULL);
 	return 0;
+}
+
+/* Called from the GUI loop. If the worker has not finished within the timeout
+ * (unreachable server, smbman LOGON stuck in the IOP), force the state to DONE
+ * so the browser becomes interactive again and reports an error instead of
+ * freezing forever on "正在启动 SMB 网络...". */
+void netfs_async_watchdog(void)
+{
+	if (netfs_async_state != NETFS_ASYNC_CONNECTING)
+		return;
+	if ((unsigned int)time(NULL) - netfs_async_started_at < NETFS_CONNECT_TIMEOUT_SEC)
+		return;
+
+	smb2_last_error = SMB2_ERR_CONNECT;
+	snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", LNG(SMB_Err_Connect));
+	netfs_async_generation++;
+	netfs_async_state = NETFS_ASYNC_DONE;
 }
 
 int netfs_async_consume_completion(void)
@@ -578,6 +634,23 @@ static void load_smbman(void)
 //endfunc load_smbman
 //---------------------------------------------------------------------------
 #ifdef NETFS
+/* fix14: bring up DEV9/NETMAN/PS2IP/SMAP/smbman on the GUI thread, before the
+ * worker starts. Defined here (after load_ps2ip/load_smbman) so all the stack
+ * globals it touches are already declared. Idempotent via the have_* guards. */
+static int netfsPrepareStack(void)
+{
+#if defined(ETH) && defined(UDPFS)
+	/* Claim the ETH stack here so a stack switch / IOP reset never happens
+	 * on the background worker. */
+	network_stack_mode = NETWORK_STACK_ETH;
+#endif
+	load_ps2ip();
+	if (!ps2dev9_loaded)
+		return -1;
+	load_smbman();
+	return 0;
+}
+
 int init_netfs(void)
 {
 	/* Idempotent. Re-entering load_ps2ip() from the file browser re-ran

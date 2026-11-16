@@ -3,6 +3,14 @@
 //---------------------------------------------------------------------------
 #include "launchelf.h"
 
+#ifdef NETFS
+/* fix14: NETFS_ASYNC_CONNECTING == 1 (netfs_compat.h). During a background
+ * SMB LOGON the worker owns the single SIF RPC channel; USB-keyboard reads
+ * (PS2KbdRead) would contend on it and wedge input. Gamepad reads use the pad
+ * DMA buffer and stay responsive, so skip only the keyboard path. */
+extern volatile int netfs_async_state;
+#endif
+
 static char padBuf_t[2][256] __attribute__((aligned(64)));
 struct padButtonStatus buttons_t[2];
 u32 padtype_t[2];
@@ -267,6 +275,13 @@ int readpad(void)
 
 	if ((ret = readpad_no_KB()) && new_pad)
 		return ret;
+
+#ifdef NETFS
+	/* fix14: do not touch the USB keyboard (SIF RPC) while the SMB worker
+	 * is doing LOGON — that contention froze all input on "正在启动". */
+	if (netfs_async_state == 1) /* NETFS_ASYNC_CONNECTING */
+		return ret;
+#endif
 
 	return simPadKB();
 }

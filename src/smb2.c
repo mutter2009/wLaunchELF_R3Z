@@ -117,10 +117,13 @@ static void smb1_reset_session(void)
 static int smb1_build_logon(struct smb2_share *s, smbLogOn_in_t *logon,
                             smbOpenShare_in_t *openshare)
 {
-	/* Keep an empty username empty: OPL (which connects fine on this share)
-	 * passes gPCUserName through unchanged, and the user's SMB has no
-	 * username/password at all. smbman handles the anonymous session setup. */
-	const char *user = (s->user && s->user[0]) ? s->user : "";
+	/* fix14: smbman rejects an empty User with a stalled NTLM session setup
+	 * on many Samba / router shares. Open PS2 Loader (which connects fine
+	 * here) and wLaunchELF's own SMB_test.c both substitute GUEST whenever
+	 * the configured username is empty. This is a connection-layer fallback
+	 * only — the saved SMB.CNF and the settings UI still show it empty, so
+	 * there is no forced "GUEST" default in the config. */
+	const char *user = (s->user && s->user[0]) ? s->user : "GUEST";
 
 	memset(logon, 0, sizeof(*logon));
 	memset(openshare, 0, sizeof(*openshare));

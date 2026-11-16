@@ -1091,6 +1091,13 @@ int getFilePath(char *out, int cnfmode)
 	while (1) {
 
 #ifdef NETFS
+		/* fix14 watchdog: if the background LOGON is stuck on an unreachable
+		 * server, force the state to DONE after a few seconds so the browser
+		 * becomes interactive again and shows the error, instead of freezing
+		 * forever on "正在启动 SMB 网络...". */
+		if (!strncmp(path, "SMB:", 4) && netfs_async_state == NETFS_ASYNC_CONNECTING)
+			netfs_async_watchdog();
+
 		/* A background SMB connect just finished. Re-read the directory so
 		 * the mounted shares appear (or the error line updates) without the
 		 * user having to leave and re-enter SMB 网络. */

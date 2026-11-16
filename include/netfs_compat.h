@@ -75,6 +75,12 @@ enum {
 extern volatile int netfs_async_state;
 extern volatile int netfs_async_generation;
 
+/* fix14: timestamp (seconds, via time(NULL)) of the last connect request.
+ * The GUI watchdog uses it to break out of a LOGON that never returns, so
+ * "正在启动 SMB 网络..." can never trap the browser forever. */
+extern volatile unsigned int netfs_async_started_at;
+#define NETFS_CONNECT_TIMEOUT_SEC 12
+
 /* Kick off a background (re)connect. reload=1 re-reads SMB.CNF on an already
  * initialised stack, reload=0 performs the full stack bring-up. Never blocks.
  * Returns 0 if started (or already running), -1 if the thread could not be
@@ -83,6 +89,10 @@ int netfs_connect_async(int reload);
 
 /* Returns 1 exactly once for every completed background connect. */
 int netfs_async_consume_completion(void);
+
+/* fix14: call from the GUI loop while CONNECTING. Breaks a stuck LOGON after
+ * NETFS_CONNECT_TIMEOUT_SEC so the browser never freezes permanently. */
+void netfs_async_watchdog(void);
 
 /* Apply SMB config changes. Never blocks the GUI: hands the mount to the
  * background worker. The caller must have written SMB.CNF first. Returns 0
