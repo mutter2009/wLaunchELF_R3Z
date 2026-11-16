@@ -641,9 +641,10 @@ static void load_ps2ip(void)
 
 #ifdef NETFS
 /* fix17: load_smbman() removed. libsmb2 runs in EE space on top of ps2ip;
- * no smb: IOP device or LOGON/OPENSHARE devctl is needed any more. */
+ * no smb: IOP device or LOGON/OPENSHARE devctl is needed any more.
+ * NOTE: init_netfs() and netfs_reconnect() stay inside #ifdef NETFS (closed
+ * at the end of this block) — do NOT add a stray #endif here. */
 //---------------------------------------------------------------------------
-#endif
 int init_netfs(void)
 {
 	/* Idempotent. Re-entering load_ps2ip() from the file browser re-ran
