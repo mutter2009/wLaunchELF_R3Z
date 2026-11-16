@@ -295,6 +295,17 @@ int netfs_async_consume_completion(void)
 {
 	static int seen_generation = 0;
 
+	/* fix21: the watchdog flips state=DONE at 12s but the worker thread can
+	 * still be alive inside load_ps2ip()/smb2_connect_share(), mutating and
+	 * freeing smb2_shares from the other thread. Reporting completion there
+	 * makes the browser call setFileList()->readSMB2() and walk that list
+	 * concurrently — the heap/list race that freezes the GUI a few seconds
+	 * after "connect failed" appears. Hold completion back until the worker
+	 * has really returned (worker_busy == 0). The error text was already
+	 * written to smb2_status_msg by the watchdog, so it stays visible. */
+	if (netfs_async_worker_busy)
+		return 0;
+
 	if (netfs_async_generation != seen_generation) {
 		seen_generation = netfs_async_generation;
 		/* fix19: NEVER swallow a watchdog-forced DONE any more.

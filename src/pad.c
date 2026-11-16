@@ -14,6 +14,29 @@
 extern volatile int netfs_async_worker_busy;
 #endif
 
+#ifdef NETFS
+/* fix21: padGetState() is a synchronous SIF RPC to the padman IOP module.
+ * While a NETFS connect worker is alive it owns/contends the single SIF RPC
+ * channel (IOP module loads, NetManIoctl, fileXio), so a padGetState() here
+ * queues behind the stuck worker and wedges ALL input a few seconds after
+ * "connect failed" appears — even though the error screen was drawn fine and
+ * the user could exit once. The pads are already initialised and stable by
+ * the time the browser runs, so report a cached STABLE state during the
+ * worker's lifetime and let padRead() read the DMA buffer directly (no SIF).
+ * This keeps the gamepad usable so Select always exits. */
+static int padStateForRead(int port)
+{
+	if (netfs_async_worker_busy)
+		return PAD_STATE_STABLE;
+	return padGetState(port, 0);
+}
+#else
+static int padStateForRead(int port)
+{
+	return padGetState(port, 0);
+}
+#endif
+
 static char padBuf_t[2][256] __attribute__((aligned(64)));
 struct padButtonStatus buttons_t[2];
 u32 padtype_t[2];
@@ -43,7 +66,7 @@ int readpad_noKBnoRepeat(void)
 	int port, state, ret[2];
 
 	for (port = 0; port < 2; port++) {
-		if ((state = padGetState(port, 0)) == PAD_STATE_STABLE || (state == PAD_STATE_FINDCTP1)) {
+		if ((state = padStateForRead(port)) == PAD_STATE_STABLE || (state == PAD_STATE_FINDCTP1)) {
 			//Deal with cases where pad state is valid for padRead
 			ret[port] = padRead(port, 0, &buttons_t[port]);
 			if (ret[port] != 0) {
@@ -73,7 +96,7 @@ int readpad_no_KB(void)
 	int port, state, ret[2];
 
 	for (port = 0; port < 2; port++) {
-		if ((state = padGetState(port, 0)) == PAD_STATE_STABLE || (state == PAD_STATE_FINDCTP1)) {
+		if ((state = padStateForRead(port)) == PAD_STATE_STABLE || (state == PAD_STATE_FINDCTP1)) {
 			//Deal with cases where pad state is valid for padRead
 			ret[port] = padRead(port, 0, &buttons_t[port]);
 			if (ret[port] != 0) {
@@ -315,13 +338,13 @@ void waitPadReady(int port, int slot)
 	int state, lastState;
 	char stateString[16];
 
-	state = padGetState(port, slot);
+	state = padStateForRead(port);
 	lastState = -1;
 	while ((state != PAD_STATE_DISCONN) && (state != PAD_STATE_STABLE) && (state != PAD_STATE_FINDCTP1)) {
 		if (state != lastState)
 			padStateInt2String(state, stateString);
 		lastState = state;
-		state = padGetState(port, slot);
+		state = padStateForRead(port);
 	}
 }
 //---------------------------------------------------------------------------
@@ -330,11 +353,11 @@ void waitAnyPadReady(void)
 {
 	int state_1, state_2;
 
-	state_1 = padGetState(0, 0);
-	state_2 = padGetState(1, 0);
+	state_1 = padStateForRead(0);
+	state_2 = padStateForRead(1);
 	while ((state_1 != PAD_STATE_DISCONN) && (state_2 != PAD_STATE_DISCONN) && (state_1 != PAD_STATE_STABLE) && (state_2 != PAD_STATE_STABLE) && (state_1 != PAD_STATE_FINDCTP1) && (state_2 != PAD_STATE_FINDCTP1)) {
-		state_1 = padGetState(0, 0);
-		state_2 = padGetState(1, 0);
+		state_1 = padStateForRead(0);
+		state_2 = padStateForRead(1);
 	}
 }
 //---------------------------------------------------------------------------
