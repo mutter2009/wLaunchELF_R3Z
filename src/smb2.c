@@ -21,6 +21,11 @@
 #include <netman.h>
 #include <time.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
 #include <ps2ip.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -51,6 +56,65 @@ int netfs_net_inited = 0;
  * original code never set this (default 0 = wait forever) — that is why a
  * dead/unreachable server froze the UI on "正在启动 SMB 网络...". */
 #define SMB2_COMMAND_TIMEOUT_SEC 6
+
+/* fix18: belt-and-braces TCP reachability probe.
+ * smb2_set_timeout() bounds libsmb2 command timeouts, but on the PS2 port the
+ * initial socket connect() can still stall on a firewall that drops SYN
+ * packets (no RST), which a timeout alone does not always rescue. A bounded
+ * non-blocking connect + select() lets an unreachable host fail in ~2.5s and
+ * keeps the GUI responsive. This is the same proven probe fix16 used for
+ * smbman; port 445 is fixed because libsmb2's URL has no port field.
+ * Returns 1 = reachable (or a hostname we cannot probe, let libsmb2 resolve),
+ *         0 = definitively unreachable within the timeout. */
+#define SMB2_PROBE_TIMEOUT_MS 2500
+static int smb2_server_reachable(const char *server)
+{
+	struct sockaddr_in addr;
+	struct timeval tv;
+	fd_set wfds, rfds;
+	socklen_t errlen;
+	int fd, flags, rc, err;
+
+	if (server == NULL || server[0] == '\0')
+		return 0;
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(445);
+	addr.sin_addr.s_addr = inet_addr(server);
+	/* Non-numeric host: let libsmb2 resolve it, do not block on a probe. */
+	if (addr.sin_addr.s_addr == INADDR_NONE)
+		return 1;
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0)
+		return 1; /* socket unavailable: don't block connect on this account */
+
+	flags = fcntl(fd, F_GETFL, 0);
+	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+	if (rc < 0) {
+		FD_ZERO(&rfds);
+		FD_ZERO(&wfds);
+		FD_SET(fd, &rfds);
+		FD_SET(fd, &wfds);
+		tv.tv_sec = SMB2_PROBE_TIMEOUT_MS / 1000;
+		tv.tv_usec = (SMB2_PROBE_TIMEOUT_MS % 1000) * 1000;
+		rc = select(fd + 1, &rfds, &wfds, NULL, &tv);
+		if (rc <= 0) { /* timeout or select error */
+			close(fd);
+			return 0;
+		}
+	}
+
+	/* Distinguish a real connection from a deferred connect error. */
+	err = 0;
+	errlen = sizeof(err);
+	getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+	close(fd);
+	return (err == 0);
+}
 
 void smb2_request_reload(void)
 {
@@ -186,6 +250,18 @@ static int loadSMB2CNF(char *path)
 			url = smb2_parse_url(smb2, smb2_share->url);
 			if (url == NULL) {
 				smb2_last_error = SMB2_ERR_NO_SHARE;
+				free_smb2_share(smb2_share);
+				smb2_share = NULL;
+				continue;
+			}
+			/* fix18: skip libsmb2 connect when the TCP port is
+			 * unreachable, so a SYN-dropping host fails in ~2.5s
+			 * instead of hanging the worker / showing a frozen UI. */
+			if (!smb2_server_reachable(url->server)) {
+				DPRINTF("smb2: %s:445 unreachable (TCP probe), skip connect\n",
+				        url->server);
+				smb2_destroy_url(url);
+				smb2_last_error = SMB2_ERR_CONNECT;
 				free_smb2_share(smb2_share);
 				smb2_share = NULL;
 				continue;
