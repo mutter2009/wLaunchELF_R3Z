@@ -321,11 +321,10 @@ void Config_SMB(void)
 					else if (s == CONFIG_SMB_AUTO) {
 						auto_connect = auto_connect ? 0 : 1;
 					} else if (s == CONFIG_SMB_RECONNECT) {
-						int rc = netfs_reconnect();
-						if (rc == 0)
-							snprintf(msg, sizeof(msg), "%s", LNG(SMB_Connected));
-						else
-							snprintf(msg, sizeof(msg), "%s", LNG(SMB_ConnectFailed));
+						/* Background connect: returns at once, no GUI freeze.
+						 * Result shows up on the SMB browser status line. */
+						netfs_reconnect();
+						snprintf(msg, sizeof(msg), "%s", LNG(SMB_Starting));
 					}
 #endif
 					else  //s == CONFIG_SMB_RETURN

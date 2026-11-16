@@ -60,10 +60,33 @@ int smb2_take_reload_request(void);
  * NFS.CNF. Idempotent. Returns 0 on success. */
 int init_netfs(void);
 
-/* Apply SMB config changes. If the stack is up, re-read SMB.CNF and re-mount
- * (each context has a bounded command timeout). If not, just queue the
- * request: the next visit to "SMB:" brings up the stack. Never loads IOP
- * modules from the settings GUI. Returns 0 on success, -1 otherwise. */
+/* ---- OPL-style asynchronous SMB bring-up -------------------------------
+ * libsmb2's smb2_connect_share() is synchronous and the PS2 port has no
+ * working command timeout. Doing it on the GUI thread froze the browser for
+ * minutes on an unreachable / SMB1-only server. Like OPL (which runs its SMB
+ * logon on a background IO thread), all network work now happens on a worker
+ * EE thread. The GUI only reads smb2_shares while state == DONE and refreshes
+ * the listing once netfs_async_consume_completion() reports a finish. */
+enum {
+	NETFS_ASYNC_IDLE = 0,       /* no connect started yet */
+	NETFS_ASYNC_CONNECTING,     /* worker owns the share list; do not read it */
+	NETFS_ASYNC_DONE            /* share list is stable; smb2_last_error valid */
+};
+extern volatile int netfs_async_state;
+extern volatile int netfs_async_generation;
+
+/* Kick off a background (re)connect. reload=1 re-reads SMB.CNF on an already
+ * initialised stack, reload=0 performs the full stack bring-up. Never blocks.
+ * Returns 0 if started (or already running), -1 if the thread could not be
+ * created. */
+int netfs_connect_async(int reload);
+
+/* Returns 1 exactly once for every completed background connect. */
+int netfs_async_consume_completion(void);
+
+/* Apply SMB config changes. Never blocks the GUI: hands the mount to the
+ * background worker. The caller must have written SMB.CNF first. Returns 0
+ * when the worker was started/already running, -1 on failure. */
 int netfs_reconnect(void);
 
 /* Returns 1 if SMB.CNF carries AUTO=1 (connect at startup), else 0. */

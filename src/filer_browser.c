@@ -1090,6 +1090,17 @@ int getFilePath(char *out, int cnfmode)
 	event = 1;  //event = initial entry
 	while (1) {
 
+#ifdef NETFS
+		/* A background SMB connect just finished. Re-read the directory so
+		 * the mounted shares appear (or the error line updates) without the
+		 * user having to leave and re-enter SMB 网络. */
+		if (!strncmp(path, "SMB:", 4) && netfs_async_consume_completion()) {
+			browser_cd = TRUE;
+			browser_pushed = TRUE; /* make the result/error line visible */
+			event |= 2;
+		}
+#endif
+
 		//Pad response section
 		waitPadReady(0, 0);
 		if (readpad()) {

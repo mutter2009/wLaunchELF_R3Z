@@ -142,6 +142,71 @@ static int vmcman_last_error = 0;
 #include <smb2.h>
 #include <nfs.h>
 static u8 have_netman = 0;
+
+/* OPL-style background SMB connect state (declared in netfs_compat.h).
+ * The worker owns smb2_shares / smb2_last_error / smb2_status_msg while
+ * state == CONNECTING; the GUI only reads them once state == DONE. */
+volatile int netfs_async_state = NETFS_ASYNC_IDLE;
+volatile int netfs_async_generation = 0;
+static int netfs_async_reload = 0;
+static unsigned char netfs_async_stack[96 * 1024] __attribute__((aligned(16)));
+
+/* Runs off the GUI thread. libsmb2's smb2_connect_share() is synchronous with
+ * no usable timeout, so it must never execute in the browser/main loop. */
+static void netfsAsyncThread(void *arg)
+{
+	(void)arg;
+
+	if (netfs_async_reload)
+		smb2_reload();
+	else
+		init_netfs();
+
+	netfs_async_generation++;
+	netfs_async_state = NETFS_ASYNC_DONE;
+	ExitDeleteThread();
+}
+
+int netfs_connect_async(int reload)
+{
+	ee_thread_t th;
+	int tid;
+
+	/* One connect at a time. A second request while the worker is running is
+	 * silently coalesced — the pending SMB.CNF is already on disk. */
+	if (netfs_async_state == NETFS_ASYNC_CONNECTING)
+		return 0;
+
+	netfs_async_reload = reload;
+	netfs_async_state = NETFS_ASYNC_CONNECTING;
+
+	th.func = netfsAsyncThread;
+	th.stack = netfs_async_stack;
+	th.stack_size = sizeof(netfs_async_stack);
+	th.gp_reg = &_gp;
+	th.initial_priority = 3; /* below pad(2)/GUI(0): keeps input responsive */
+	th.attr = 0;
+	th.option = 0;
+
+	tid = CreateThread(&th);
+	if (tid < 0) {
+		netfs_async_state = NETFS_ASYNC_DONE;
+		return -1;
+	}
+	StartThread(tid, NULL);
+	return 0;
+}
+
+int netfs_async_consume_completion(void)
+{
+	static int seen_generation = 0;
+
+	if (netfs_async_generation != seen_generation) {
+		seen_generation = netfs_async_generation;
+		return 1;
+	}
+	return 0;
+}
 #endif
 
 #ifdef EXFAT
@@ -519,19 +584,13 @@ int init_netfs(void)
 
 int netfs_reconnect(void)
 {
-	/* "立即重新连接" runs on the GUI thread. Never bring up the network
-	 * stack here: load_ps2ip() loads IOP modules and init_smb2() waits for
-	 * the Ethernet link, which together looked like a permanent freeze.
-	 * If the stack is not up yet, just remember the request; the next visit
-	 * to "SMB:" performs the mount and shows a status line. When the stack
-	 * is already up, only re-read SMB.CNF (each context has a 4s command
-	 * timeout set in loadSMB2CNF()). */
-	if (!netfs_net_inited) {
-		smb2_request_reload();
-		return -1;
-	}
-
-	return (smb2_reload() > 0) ? 0 : -1;
+	/* "立即重新连接" runs on the GUI thread. Do NOT do any network work
+	 * here: load_ps2ip() loads IOP modules and init_smb2() blocks forever
+	 * in smb2_connect_share() on an unreachable server. Hand it to the
+	 * background worker instead and return immediately. The caller has
+	 * already written the current page values to SMB.CNF.
+	 * reload=1 when the stack is up (just re-read CNF), else full bring-up. */
+	return netfs_connect_async(netfs_net_inited ? 1 : 0);
 }
 #endif
 //---------------------------------------------------------------------------

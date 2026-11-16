@@ -479,7 +479,7 @@ void Config_Network(void)
 				} else if (s == CONFIG_NET_SMB_AUTO) {
 					smb_auto = smb_auto ? 0 : 1;
 				} else if (s == CONFIG_NET_SMB_RECONNECT) {
-					int rc, saved;
+					int saved;
 					const char *base_path;
 
 					/* The three octet rows only update ipdata. Commit them
@@ -497,18 +497,13 @@ void Config_Network(void)
 					                       smb_user, smb_pass, smb_auto);
 					if (!saved) {
 						snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(Saved_Failed));
-					} else if (!netfs_net_inited) {
-						/* No stack yet. Never load IOP modules from inside
-						 * the settings GUI; the next visit to "SMB:" will
-						 * start it and mount the freshly saved config. */
-						netfs_reconnect();
-						snprintf(NetMsg, sizeof(NetMsg), "%s",
-						         LNG(SMB_Reconnect_Deferred));
 					} else {
-						drawMsg(LNG(SMB_Starting));
-						rc = netfs_reconnect();
-						snprintf(NetMsg, sizeof(NetMsg), "%s",
-						         rc == 0 ? LNG(SMB_Connected) : LNG(SMB_ConnectFailed));
+						/* OPL-style: the actual connect runs on a background
+						 * thread, so this returns immediately and the GUI
+						 * never freezes. The result appears on the SMB
+						 * browser status line once the worker finishes. */
+						netfs_reconnect();
+						snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(SMB_Starting));
 					}
 #endif
 				} else if (s == CONFIG_NET_SAVE) {

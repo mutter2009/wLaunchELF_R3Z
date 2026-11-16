@@ -106,7 +106,12 @@ int ensurePathDeviceStackReady(const char *path)
 #endif
 #ifdef NETFS
 	if (!strncmp(path, "SMB:", 4) || !strncmp(path, "nfs:", 4)) {
-		init_netfs();
+		/* Never bring the stack up synchronously from the GUI thread: that
+		 * is what froze the console. Opening SMB: has already queued the
+		 * background worker; here we only report readiness so a transfer
+		 * started while it is still connecting is refused cleanly. */
+		if (netfs_async_state == NETFS_ASYNC_IDLE)
+			netfs_connect_async(0);
 		return netfs_net_inited;
 	}
 #endif
