@@ -45,6 +45,27 @@
 #include <smb2/smb2.h>
 #include <smb2/libsmb2.h>
 
+/* fix18d: libsmb2.a calls gethostname() (nm: "U gethostname" in libsmb2.c.obj)
+ * but neither libsmb2.a nor the PS2SDK defines it, so the final link fails
+ * with "undefined reference to gethostname". wLaunchELF is an SMB client only
+ * (the server path that reads the hostname never runs), so a harmless static
+ * value is enough — the symbol just has to exist to satisfy the linker.
+ * Signature matches newlib's <sys/unistd.h> declaration. poll() is NOT
+ * defined here: libsmb2.a supplies its own (compat.c.obj: "T poll"). */
+int gethostname(char *name, size_t len)
+{
+	static const char host[] = "PlayStation2";
+	size_t n = sizeof(host) - 1;
+
+	if (name == NULL || len == 0)
+		return -1;
+	if (n >= len)
+		n = len - 1;
+	memcpy(name, host, n);
+	name[n] = '\0';
+	return 0;
+}
+
 #define discard_const(ptr) ((void *)((intptr_t)(ptr)))
 
 struct smb2_share *smb2_shares = NULL;
