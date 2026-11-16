@@ -689,19 +689,8 @@ endif
 $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ netman_irx
 
-# SMB1 (CIFS) client module. Prefer a checked-in copy (guaranteed to match
-# the ps2smb.h ABI used by smb2.c), then fall back to the toolchain copy.
-SMBMAN_SOURCE :=
-ifneq ($(wildcard iop/__precompiled/smbman.irx),)
-SMBMAN_SOURCE := iop/__precompiled/smbman.irx
-else ifneq ($(wildcard $(PS2SDK)/iop/irx/smbman.irx),)
-SMBMAN_SOURCE := $(PS2SDK)/iop/irx/smbman.irx
-endif
-ifeq ($(strip $(SMBMAN_SOURCE)),)
-$(error Missing smbman.irx. Provide iop/__precompiled/smbman.irx or install PS2SDK smbman.irx at $(PS2SDK)/iop/irx/smbman.irx)
-endif
-$(EE_ASM_DIR)smbman_irx.s: $(SMBMAN_SOURCE) | $(EE_ASM_DIR)
-	$(BIN2S) $< $@ smbman_irx
+# fix17: smbman.irx (SMB1 client) removed — libsmb2 (SMB2) connects in EE
+# space, so no smb: IOP device module is embedded any more.
 endif
 
 $(EE_ASM_DIR)ps2host_irx.s: iop/ps2host.irx | $(EE_ASM_DIR)

@@ -4,21 +4,14 @@
 //---------------------------------------------------------------------------
 #include "netfs_compat.h"
 
-/* One configured SMB share. The public fields (name/user/password/url/next)
- * are unchanged from the libsmb2 version; the server/port/sharename fields
- * are the parsed SMB1 target used by the smbman backend.
- * 'smb2' is retained only so existing consumers keep compiling; the SMB1
- * backend does not use it. */
+/* One configured SMB share. Restored to the original libsmb2 layout (fix17). */
 struct smb2_share {
         struct smb2_share *next;
-        void *smb2;
+        struct smb2_context *smb2;
         char *name;
         const char *user;
         const char *password;
         char *url;
-        char server[64];
-        int  port;
-        char sharename[256];
 };
 
 extern struct smb2_share *smb2_shares;
@@ -31,10 +24,9 @@ int SMB2rmdir(const char *dir);
 int SMB2unlink(const char *dir);
 int SMB2rename(const char *path, const char *newpath);
 
-/* SMB1 backend handle: just a fileXio fd (the rest of wLE treats this as an
- * opaque pointer, so no caller needs to change). */
 struct SMB2FH {
-        int fd;
+        struct smb2_context *smb2;
+        struct smb2fh *fh;
 };
 struct SMB2FH *SMB2open(const char *path, int mode);
 int SMB2close(struct SMB2FH *fh);
