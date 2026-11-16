@@ -282,13 +282,23 @@ int netfs_async_consume_completion(void)
 
 	if (netfs_async_generation != seen_generation) {
 		seen_generation = netfs_async_generation;
-		/* A watchdog-forced DONE must not re-list the directory: the worker
-		 * can still own the SIF/fileXio channel, and a listing here would
-		 * block the GUI thread forever (pad input dies with it). */
-		if (netfs_async_watchdog_fired) {
-			netfs_async_watchdog_fired = 0;
-			return 0;
-		}
+		/* fix19: NEVER swallow a watchdog-forced DONE any more.
+		 *
+		 * fix16 swallowed it because the old SMB1 backend's stuck
+		 * fileXioDevctl(LOGON) owned the shared fileXio/SIF channel: a
+		 * second setFileList() -> fileXio directory listing would then block
+		 * the GUI thread forever and kill pad input.
+		 *
+		 * That backend is gone. libsmb2 runs on EE-side lwIP sockets and
+		 * never holds the fileXio RPC channel, so re-listing here is safe.
+		 * Swallowing was exactly why the browser sat on "正在启动 SMB 网络"
+		 * forever after a timeout: no refresh ran, so the already-prepared
+		 * error line was never shown and the UI looked frozen.
+		 *
+		 * A late worker still cannot overwrite this result: netfsAsyncThread
+		 * only publishes DONE when started_gen == netfs_async_generation,
+		 * and the watchdog bumped generation. */
+		netfs_async_watchdog_fired = 0;
 		return 1;
 	}
 	return 0;
