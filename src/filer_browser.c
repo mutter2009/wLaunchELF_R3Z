@@ -8,6 +8,10 @@
 #include "gui_hdd0_format.h"
 #include "init.h"
 
+#ifdef NETFS
+#include "netfs_compat.h"
+#endif
+
 // Built-in ELISA100.FNT data (src/font_elisa.c), used as fallback so Japanese
 // MC save titles display without an external font file. External ELISA100.FNT
 // in WLE.ELF's directory will still override this built-in data if present.
@@ -1888,7 +1892,15 @@ int getFilePath(char *out, int cnfmode)
 					char display_path[MAX_PATH];
 
 					formatBrowserPathForDisplay(path, display_path);
-					snprintf(msg0, sizeof(msg0), "%s", display_path);
+#ifdef NETFS
+					/* Keep the SMB connect status visible after the browser
+					 * redraws; otherwise an unmounted SMB: looks like an
+					 * empty folder with no explanation. */
+					if (!strncmp(path, "SMB:", 4) && smb2_status_msg[0] != '\0')
+						snprintf(msg0, sizeof(msg0), "%s", smb2_status_msg);
+					else
+#endif
+						snprintf(msg0, sizeof(msg0), "%s", display_path);
 				}
 
 			//Tooltip section

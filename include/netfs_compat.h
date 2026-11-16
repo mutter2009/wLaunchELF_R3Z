@@ -31,15 +31,39 @@ static inline void clear_mcTable(sceMcTblGetDir *mcT)
  * idempotency guard shared between smb2.c and nfs.c. */
 extern int netfs_net_inited;
 
+/* Status line shown by the file browser while visiting SMB:. Empty when at
+ * least one share is mounted. Defined in smb2.c. */
+extern char smb2_status_msg[128];
+
+/* OPL-style startup status codes (OPL uses gNetworkStartup +
+ * ethDisplayErrorStatus()). Instead of an unexplained empty SMB folder, the
+ * GUI now reports WHY the mount failed. Defined in smb2.c. */
+enum {
+	SMB2_ERR_NONE = 0,
+	SMB2_ERR_NO_CNF,    /* no SMB.CNF found in any candidate path */
+	SMB2_ERR_NO_SHARE,  /* CNF found but URL / share name empty */
+	SMB2_ERR_LINK,      /* Ethernet link never came up */
+	SMB2_ERR_CONNECT    /* server refused / timed out / bad credentials */
+};
+extern int smb2_last_error;
+
+/* Re-read SMB.CNF without touching NetMan/ps2ip or waiting for the link. */
+int smb2_reload(void);
+
+/* The settings page must never run a synchronous mount from the GUI thread.
+ * It sets a pending flag instead; the next visit to "SMB:" consumes it. */
+void smb2_request_reload(void);
+int smb2_take_reload_request(void);
+
 /* Bring up the network stack (loads SMAP/PS2IP IOP modules, then NetMan +
  * ps2ip on the EE) and mount any SMB2 / NFS shares described in SMB2.CNF /
  * NFS.CNF. Idempotent. Returns 0 on success. */
 int init_netfs(void);
 
-/* Re-establish SMB2/NFS mounts after the config changed: tear down the
- * existing mounts and re-read SMB.CNF / NFS.CNF, re-mounting the shares.
- * The EE network stack (netman/ps2ip) is left up. Returns 0 on success,
- * -1 if the link never came up. */
+/* Apply SMB config changes. If the stack is up, re-read SMB.CNF and re-mount
+ * (each context has a bounded command timeout). If not, just queue the
+ * request: the next visit to "SMB:" brings up the stack. Never loads IOP
+ * modules from the settings GUI. Returns 0 on success, -1 otherwise. */
 int netfs_reconnect(void);
 
 /* Returns 1 if SMB.CNF carries AUTO=1 (connect at startup), else 0. */

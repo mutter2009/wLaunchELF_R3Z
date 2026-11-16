@@ -1580,10 +1580,57 @@ int getDir(const char *path, FILEINFO *info)
 #endif
 #endif
 #ifdef NETFS
-	else if (!strncmp(path, "SMB:", 4))
+	else if (!strncmp(path, "SMB:", 4)) {
+		/* NETFS is deliberately NOT brought up at boot: doing so reloaded
+		 * IOP modules before the GUI was ready and hung startup. Start it
+		 * lazily the first time the user actually opens "SMB 网络", with a
+		 * visible status line so it no longer looks like a dead entry. */
+		if (!netfs_net_inited) {
+			snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", LNG(SMB_Starting));
+			drawMsg(smb2_status_msg);
+			init_netfs();
+			/* init_netfs() already read the fresh SMB.CNF. */
+			(void)smb2_take_reload_request();
+		} else if (smb2_take_reload_request()) {
+			/* Settings page changed SMB.CNF while the stack was up. */
+			snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", LNG(SMB_Starting));
+			drawMsg(smb2_status_msg);
+			smb2_reload();
+		}
+		if (smb2_shares == NULL) {
+			/* OPL reports an explicit gNetworkStartup error code instead of
+			 * leaving the user in an empty folder. Do the same here. */
+			const char *reason;
+
+			switch (smb2_last_error) {
+			case SMB2_ERR_NO_CNF:
+				reason = LNG(SMB_Err_No_CNF);
+				break;
+			case SMB2_ERR_NO_SHARE:
+				reason = LNG(SMB_Err_No_Share);
+				break;
+			case SMB2_ERR_LINK:
+				reason = LNG(SMB_Err_Link);
+				break;
+			case SMB2_ERR_CONNECT:
+				reason = LNG(SMB_Err_Connect);
+				break;
+			default:
+				reason = LNG(SMB_Not_Connected);
+				break;
+			}
+			snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", reason);
+		} else
+			smb2_status_msg[0] = '\0';
 		n = readSMB2(path, info, max);
-	else if (!strncmp(path, "nfs:", 4))
+	}
+	else if (!strncmp(path, "nfs:", 4)) {
+		/* NFS.CNF is optional. Never touch it while starting SMB: a stale
+		 * unreachable NFS server used to block the EE thread forever. */
+		if (nfs_shares == NULL)
+			init_nfs(ip, netmask, gw);
 		n = readNFS(path, info, max);
+	}
 #endif
 #ifdef MMCE
 	else if (!strncmp(path, "mmce", 4)) {
@@ -1817,12 +1864,12 @@ int setFileList(const char *path, const char *ext, FILEINFO *files, int cnfmode)
 					files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
 				}
 			}
-#ifdef UDPFS
-			strcpy(files[nfiles].name, "udpfs:");
-			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
-#endif
 #ifdef NETFS
 			strcpy(files[nfiles].name, "SMB:");
+			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
+#endif
+#ifdef UDPFS
+			strcpy(files[nfiles].name, "udpfs:");
 			files[nfiles++].stats.AttrFile = sceMcFileAttrSubdir;
 #endif
 			if (cnfmode < 2) {

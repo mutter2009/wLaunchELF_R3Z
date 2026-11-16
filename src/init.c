@@ -504,37 +504,34 @@ int init_netfs(void)
 #endif
 
 	/* Bring up DEV9 + NETMAN + SMAP + PS2IP on the EE. init_smb2() performs
-	 * the idempotent NetManInit()/ps2ipInit() and parses SMB.CNF; init_nfs()
-	 * parses NFS.CNF. Both tolerate missing config files. */
+	 * the idempotent NetManInit()/ps2ipInit() and parses SMB.CNF.
+	 * init_nfs() is deliberately NOT called here: a stale NFS.CNF pointing
+	 * at an unreachable server would synchronously block the EE thread.
+	 * NFS is mounted lazily only when the user actually opens "nfs:". */
 	load_ps2ip();
 	if (!ps2dev9_loaded) {
 		DPRINTF(" [NETFS]: network stack unavailable, aborting\n");
 		return -1;
 	}
 	init_smb2(ip, netmask, gw);
-	init_nfs(ip, netmask, gw);
 	return 0;
 }
 
 int netfs_reconnect(void)
 {
-	/* Only re-mount SMB shares. Do NOT call init_smb2()/init_nfs() here:
-	 * init_smb2() waits for the Ethernet link again (up to 10s) and the
-	 * repeated NetMan/ps2ip re-entry from inside the settings GUI is what
-	 * made "Reconnect" appear to freeze the console. init_nfs() is skipped
-	 * too: an unreachable NFS.CNF server would block the EE thread even
-	 * though the user only changed SMB settings. */
-	extern int smb2_mount_count(void);
-	extern int smb2_reload(void);
-	int mounted;
-
+	/* "立即重新连接" runs on the GUI thread. Never bring up the network
+	 * stack here: load_ps2ip() loads IOP modules and init_smb2() waits for
+	 * the Ethernet link, which together looked like a permanent freeze.
+	 * If the stack is not up yet, just remember the request; the next visit
+	 * to "SMB:" performs the mount and shows a status line. When the stack
+	 * is already up, only re-read SMB.CNF (each context has a 4s command
+	 * timeout set in loadSMB2CNF()). */
 	if (!netfs_net_inited) {
-		init_netfs();
-		return (smb2_mount_count() > 0) ? 0 : -1;
+		smb2_request_reload();
+		return -1;
 	}
 
-	mounted = smb2_reload();  /* deinit_smb2() + re-read SMB.CNF */
-	return (mounted > 0) ? 0 : -1;
+	return (smb2_reload() > 0) ? 0 : -1;
 }
 #endif
 //---------------------------------------------------------------------------

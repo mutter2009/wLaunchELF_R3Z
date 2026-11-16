@@ -103,16 +103,18 @@ void configFormatLabelValueAligned(char *dst, size_t dst_size, const char *label
 	if (label_width < 0)
 		label_width = 0;
 
-	label_len = configLabelDisplayWidth(label);
+	label_len = configLabelDisplayWidth(label ? label : "");
 	pad_spaces = label_width - label_len;
 	if (pad_spaces < 0)
 		pad_spaces = 0;
 
-	/* Right-align the label so the colon and the value of every row start
-	 * in the same column. Padding *after* the label aligned the values but
-	 * left the colons ragged, which is what the classic Chinese build
-	 * avoided by padding in front of the label instead. */
-	prefix_len = snprintf(dst, dst_size, "  %*s%s: ", pad_spaces, "", label ? label : "");
+	/* Left-align the label and pad AFTER the colon. Every row then starts
+	 * at the same column, while all values (including every ON/OFF switch)
+	 * begin at column label_width+4. This matches netFormatRow() on the
+	 * network page and the classic Chinese build's flush-left look; the
+	 * previous right-aligned labels made short labels float to the right. */
+	prefix_len = snprintf(dst, dst_size, "  %s:%*s", label ? label : "",
+	                      pad_spaces + 1, "");
 	if (prefix_len < 0 || prefix_len >= (int)dst_size) {
 		dst[dst_size - 1] = '\0';
 		return;

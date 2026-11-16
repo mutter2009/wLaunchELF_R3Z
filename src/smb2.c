@@ -33,7 +33,34 @@ typedef uint8_t smb2_lease_key[SMB2_LEASE_KEY_SIZE];
 
 #include <smb2/libsmb2.h>
 
+/* libsmb2 ships a per-context command timeout in newer releases, but some
+ * PS2SDK port snapshots do not. Declare it here and mark the symbol weak:
+ * if the library has no such symbol its address is NULL and we skip the
+ * call, so linking can never fail. The old "?timeout=5" URL trick is NOT
+ * used any more: an older smb2_parse_url() rejects unknown URL arguments
+ * and returns NULL, which silently prevented every share from mounting. */
+extern void smb2_set_timeout(struct smb2_context *smb2, int seconds);
+#pragma weak smb2_set_timeout
+
 struct smb2_share *smb2_shares = NULL;
+
+/* Status line for the file browser (empty while at least one share is up). */
+char smb2_status_msg[128] = "";
+int smb2_last_error = SMB2_ERR_NONE;
+static int smb2_reload_pending = 0;
+
+void smb2_request_reload(void)
+{
+	smb2_reload_pending = 1;
+}
+
+int smb2_take_reload_request(void)
+{
+	int pending = smb2_reload_pending;
+
+	smb2_reload_pending = 0;
+	return pending;
+}
 
 /* Shared NETFS network-init guard (also referenced by nfs.c). */
 int netfs_net_inited = 0;
@@ -58,8 +85,8 @@ static int WaitValidNetState(int (*checkingFunction)(void))
 		SetAlarm(1000 * 16, &EthStatusCheckCb, &ThreadID);
 		SleepThread();
 
-		if(retry_cycles >= 10)	//10s = 10*1000ms
-			return -1;
+		if(retry_cycles >= 5)	//5s max. A GUI-side lazy mount must not
+			return -1;	//look like a frozen console.
 	}
 
 	return 0;
@@ -81,7 +108,10 @@ static void free_smb2_share(struct smb2_share *smb2_share)
                 return;
         }
         if (smb2_share->smb2) {
-                smb2_disconnect_share(smb2_share->smb2);
+                /* smb2_disconnect_share() is a synchronous SMB command. On a
+                 * dead server (or on a port without command timeouts) it waits
+                 * forever and locked the GUI on "Reconnect". Destroying the
+                 * context closes the socket locally without any round trip. */
                 smb2_destroy_context(smb2_share->smb2);
         }
         free(smb2_share->name);
@@ -124,6 +154,7 @@ static int loadSMB2CNF(char *path)
                                 smb2_share->name = strdup("SMB");
                         }
                         if (value[0] == '\0') {
+                                smb2_last_error = SMB2_ERR_NO_SHARE;
                                 continue;
                         }
                         if (smb2_find_share(smb2_share->name)) {
@@ -133,6 +164,16 @@ static int loadSMB2CNF(char *path)
                         }
                         smb2_share->url = strdup(value);
                         smb2_share->smb2 = smb2 = smb2_init_context();
+                        /* libsmb2 has NO command timeout by default: an
+                         * unreachable server blocks the synchronous
+                         * smb2_connect_share() forever and locks the whole
+                         * GUI thread. Bound it to 4 seconds when the port
+                         * exposes the setter. Never append "?timeout=" to
+                         * the CNF URL itself: older smb2_parse_url() builds
+                         * reject unknown query arguments and return NULL,
+                         * which silently made every share disappear. */
+                        if (smb2_set_timeout)
+                                smb2_set_timeout(smb2, 4);
                         /* Always set an explicit user, even "": otherwise
                          * libsmb2 falls back to getlogin_r() and may use a
                          * bogus user pointer. Never set an EMPTY password:
@@ -152,22 +193,31 @@ static int loadSMB2CNF(char *path)
                         smb2_set_user(smb2, sess_user);
                         if (smb2_share->password && smb2_share->password[0])
                                 smb2_set_password(smb2, smb2_share->password);
-                        /* libsmb2 defaults to "no command timeout". An
-                         * unreachable server then blocks the synchronous
-                         * smb2_connect_share() forever and locks the whole
-                         * GUI ("Reconnect freezes"). Ask the library to give
-                         * up after 5 seconds. Query parameters are consumed
-                         * by smb2_parse_url(); they are not part of
-                         * url->share, and SMB.CNF keeps the clean URL so the
-                         * settings page reads it back unchanged. */
-                        if (strchr(value, '?') == NULL)
-                                snprintf(full_url, sizeof(full_url), "%s?timeout=5", value);
-                        else
-                                snprintf(full_url, sizeof(full_url), "%s", value);
-                        url = smb2_parse_url(smb2, full_url);
+                        /* Parse the clean URL from SMB.CNF. Prefer the API
+                         * setter when the port has it; otherwise use the URL
+                         * query form and verify the parser really consumed
+                         * the '?' part (a very old parser would leave it in
+                         * url->share and tree-connect would fail). */
+                        if (smb2_set_timeout) {
+                                smb2_set_timeout(smb2, 4);
+                                url = smb2_parse_url(smb2, value);
+                        } else if (strchr(value, '?') == NULL) {
+                                snprintf(full_url, sizeof(full_url), "%s?timeout=4", value);
+                                url = smb2_parse_url(smb2, full_url);
+                                if (url != NULL && url->share != NULL &&
+                                    strchr(url->share, '?') != NULL) {
+                                        smb2_destroy_url(url);
+                                        url = NULL;
+                                }
+                                if (url == NULL)
+                                        url = smb2_parse_url(smb2, value);
+                        } else {
+                                url = smb2_parse_url(smb2, value);
+                        }
                         if (url == NULL || url->server == NULL || url->share == NULL ||
                             url->share[0] == '\0') {
                                 DPRINTF("invalid SMB URL: %s (%s)\n", value, smb2_get_error(smb2));
+                                smb2_last_error = SMB2_ERR_NO_SHARE;
                                 if (url != NULL)
                                         smb2_destroy_url(url);
                                 free_smb2_share(smb2_share);
@@ -179,16 +229,18 @@ static int loadSMB2CNF(char *path)
                                 DPRINTF("failed to connect to : //%s/%s %s\n",
                                            url->server, url->share,
                                            smb2_get_error(smb2));
+                                smb2_last_error = SMB2_ERR_CONNECT;
                                 smb2_destroy_url(url);
-                                /* free_smb2_share() disconnects and destroys
-                                 * the context too. A plain free() leaked one
-                                 * context per failed reconnect. */
+                                /* free_smb2_share() destroys the context too.
+                                 * A plain free() leaked one context per
+                                 * failed reconnect. */
                                 free_smb2_share(smb2_share);
                                 smb2_share = NULL;
                                 continue;
                         }
                         DPRINTF("Mounted share: \\\\%s\\%s as %s\n",
                                    url->server, url->share, smb2_share->name);
+                        smb2_last_error = SMB2_ERR_NONE;
                         smb2_destroy_url(url);
                         
                         smb2_share->next = smb2_shares;
@@ -212,6 +264,23 @@ void deinit_smb2(void)
         }
 }
 
+/* A CNF file that exists wins the search, even when its share cannot be
+ * mounted. Previously a failed connect made us walk every candidate path
+ * and connect again to the same stale server several times (4s each), which
+ * felt exactly like a console freeze. */
+static int smb2TryCnf(const char *path)
+{
+	char *ram = preloadCNF((char *)path);
+
+	if (ram == NULL)
+		return -1;  /* no file here: keep searching */
+	free(ram);
+	/* The file exists; if it yields no mount, the reason is a missing/empty
+	 * URL rather than "no config at all". */
+	smb2_last_error = SMB2_ERR_NO_SHARE;
+	return loadSMB2CNF((char *)path);
+}
+
 /* Look for SMB.CNF everywhere the settings page can write it, not only in
  * the three hard-coded SYS-CONF folders. A file saved next to IPCONFIG.DAT
  * on mass: was invisible after a reboot. */
@@ -230,14 +299,17 @@ static int smb2LoadAllCNF(void)
 	char *slash;
 	int rc, i;
 
+	/* Assume "no config" until a candidate file proves otherwise. */
+	smb2_last_error = SMB2_ERR_NO_CNF;
+
 	if (LoadedIPConfigPath[0] != '\0') {
 		snprintf(tmp, sizeof(tmp), "%s", LoadedIPConfigPath);
 		slash = strrchr(tmp, '/');
 		if (slash != NULL) {
 			slash[1] = '\0';
 			snprintf(path, sizeof(path), "%sSMB.CNF", tmp);
-			rc = loadSMB2CNF(path);
-			if (rc > 0)
+			rc = smb2TryCnf(path);
+			if (rc >= 0)
 				return rc;
 		}
 	}
@@ -248,8 +320,8 @@ static int smb2LoadAllCNF(void)
 		if (slash != NULL) {
 			slash[1] = '\0';
 			snprintf(path, sizeof(path), "%sSMB.CNF", tmp);
-			rc = loadSMB2CNF(path);
-			if (rc > 0)
+			rc = smb2TryCnf(path);
+			if (rc >= 0)
 				return rc;
 		}
 	}
@@ -258,14 +330,14 @@ static int smb2LoadAllCNF(void)
 	if (dir[0] != '\0') {
 		snprintf(path, sizeof(path), "%s%sSMB.CNF", dir,
 		         (dir[strlen(dir) - 1] == '/') ? "" : "/");
-		rc = loadSMB2CNF(path);
-		if (rc > 0)
+		rc = smb2TryCnf(path);
+		if (rc >= 0)
 			return rc;
 	}
 
 	for (i = 0; i < (int)(sizeof(fixed) / sizeof(fixed[0])); i++) {
-		rc = loadSMB2CNF((char *)fixed[i]);
-		if (rc > 0)
+		rc = smb2TryCnf(fixed[i]);
+		if (rc >= 0)
 			return rc;
 	}
 	return 0;
@@ -301,6 +373,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	DPRINTF("Waiting for connection...\n");
 	if(ethWaitValidNetIFLinkState() != 0) {
 		DPRINTF("Error: failed to get valid link status.\n");
+		smb2_last_error = SMB2_ERR_LINK;
 		return -1;
 	}
 	DPRINTF("Network Initialized\n");

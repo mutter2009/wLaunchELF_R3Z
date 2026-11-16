@@ -314,6 +314,42 @@ static void netFormatSmbHost(char *dst, size_t dst_size, const char *host)
 	else
 		snprintf(dst, dst_size, "%s", host);  /* host name, not an IPv4 */
 }
+
+/* Full path of the SMB.CNF written by the last save. "立即重新连接" writes
+ * the CURRENT page values there so the mount actually uses the new IP /
+ * share instead of re-reading a stale file. */
+static char net_last_smb_cnf[MAX_PATH] = "";
+
+static int netWriteSmbCnf(char *msg, const char *base_path, char *smb_name,
+                          const char *smb_host, const char *smb_port,
+                          const char *smb_share, const char *smb_user,
+                          const char *smb_pass, int smb_auto)
+{
+	char smb_path[MAX_PATH];
+	char smb_url[NET_SMB_URL_MAX];
+	char *sl;
+
+	if (base_path == NULL || base_path[0] == '\0')
+		return 0;
+	snprintf(smb_path, sizeof(smb_path), "%s", base_path);
+	sl = strrchr(smb_path, '/');
+	if (sl != NULL)
+		strcpy(sl + 1, "SMB.CNF");
+
+	netBuildSmbUrl(smb_url, sizeof(smb_url), smb_host, smb_port, smb_share);
+	if (smb_name[0] == '\0')
+		snprintf(smb_name, NET_SMB_HOST_MAX, "%s",
+		         smb_share[0] ? smb_share : "SMB");
+	if (smb_url[0] == '\0') {
+		snprintf(msg, MAX_PATH, "%s", LNG(Saved_Failed));
+		return 0;
+	}
+	if (!saveSMBConfig(msg, smb_path, smb_name, smb_url,
+	                   smb_user, smb_pass, smb_auto))
+		return 0;
+	snprintf(net_last_smb_cnf, sizeof(net_last_smb_cnf), "%s", smb_path);
+	return 1;
+}
 #endif
 
 void Config_Network(void)
@@ -443,18 +479,37 @@ void Config_Network(void)
 				} else if (s == CONFIG_NET_SMB_AUTO) {
 					smb_auto = smb_auto ? 0 : 1;
 				} else if (s == CONFIG_NET_SMB_RECONNECT) {
-					int rc;
+					int rc, saved;
+					const char *base_path;
 
 					/* The three octet rows only update ipdata. Commit them
 					 * to the globals that init_smb2() feeds to ps2ipInit(),
-					 * so SMB runs on the local IP / netmask / gateway shown
-					 * on this page even before "Save to" is used. */
+					 * then write the CURRENT page fields to SMB.CNF.
+					 * Previously "Reconnect" only re-read the old file, so
+					 * edits made on this page were silently ignored. */
 					sprintf(ip, "%i.%i.%i.%i", ipdata.ip[0], ipdata.ip[1], ipdata.ip[2], ipdata.ip[3]);
 					sprintf(netmask, "%i.%i.%i.%i", ipdata.nm[0], ipdata.nm[1], ipdata.nm[2], ipdata.nm[3]);
 					sprintf(gw, "%i.%i.%i.%i", ipdata.gw[0], ipdata.gw[1], ipdata.gw[2], ipdata.gw[3]);
-					rc = netfs_reconnect();
-					snprintf(NetMsg, sizeof(NetMsg), "%s",
-					         rc == 0 ? LNG(SMB_Connected) : LNG(SMB_ConnectFailed));
+					base_path = net_last_smb_cnf[0] ? net_last_smb_cnf :
+					            (LoadedIPConfigPath[0] ? LoadedIPConfigPath : save_cwd_path);
+					saved = netWriteSmbCnf(NetMsg, base_path, smb_name,
+					                       smb_host, smb_port, smb_share,
+					                       smb_user, smb_pass, smb_auto);
+					if (!saved) {
+						snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(Saved_Failed));
+					} else if (!netfs_net_inited) {
+						/* No stack yet. Never load IOP modules from inside
+						 * the settings GUI; the next visit to "SMB:" will
+						 * start it and mount the freshly saved config. */
+						netfs_reconnect();
+						snprintf(NetMsg, sizeof(NetMsg), "%s",
+						         LNG(SMB_Reconnect_Deferred));
+					} else {
+						drawMsg(LNG(SMB_Starting));
+						rc = netfs_reconnect();
+						snprintf(NetMsg, sizeof(NetMsg), "%s",
+						         rc == 0 ? LNG(SMB_Connected) : LNG(SMB_ConnectFailed));
+					}
 #endif
 				} else if (s == CONFIG_NET_SAVE) {
 					save_target = configSaveTargetPrompt(save_override_path, save_cwd_path, save_sysconf_path, LoadedIPConfigPath, has_override_path);
@@ -478,8 +533,6 @@ void Config_Network(void)
 					                                    save_sysconf_path, LoadedIPConfigPath,
 					                                    has_override_path);
 					if (save_target != CONFIG_SAVE_TARGET_CANCEL) {
-						char smb_path[MAX_PATH];
-
 						if (save_target == CONFIG_SAVE_TARGET_OVERRIDE)
 							save_path = save_override_path;
 						else if (save_target == CONFIG_SAVE_TARGET_CWD)
@@ -489,26 +542,13 @@ void Config_Network(void)
 
 						/* SMB settings live in their own SMB.CNF using the
 						 * same .CNF suffix wLaunchELF uses for its config.
-						 * Nothing is mixed into IPCONFIG.DAT and no extra
-						 * copies are mirrored to other locations. */
-						snprintf(smb_path, sizeof(smb_path), "%s", save_path);
-						{
-							char *sl = strrchr(smb_path, '/');
-							if (sl != NULL)
-								strcpy(sl + 1, "SMB.CNF");
-						}
-						netBuildSmbUrl(smb_url, sizeof(smb_url), smb_host, smb_port, smb_share);
-						if (smb_name[0] == '\0')
-							snprintf(smb_name, sizeof(smb_name), "%s",
-							         smb_share[0] ? smb_share : "SMB");
-						if (smb_url[0] == '\0') {
+						 * Nothing is mixed into IPCONFIG.DAT. */
+						if (!netWriteSmbCnf(NetMsg, save_path, smb_name,
+						                    smb_host, smb_port, smb_share,
+						                    smb_user, smb_pass, smb_auto))
 							snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(Saved_Failed));
-						} else if (!saveSMBConfig(NetMsg, smb_path, smb_name, smb_url,
-						                          smb_user, smb_pass, smb_auto)) {
-							snprintf(NetMsg, sizeof(NetMsg), "%s", LNG(Saved_Failed));
-						} else {
+						else
 							snprintf(NetMsg, sizeof(NetMsg), "%s %s", LNG(Saved), "SMB.CNF");
-						}
 					}
 #endif
 				} else
