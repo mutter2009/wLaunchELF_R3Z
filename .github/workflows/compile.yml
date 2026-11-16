@@ -125,9 +125,14 @@ jobs:
         echo "libnfs install check:"
         ls -l "$PS2SDK/ports/include/nfsc/libnfs.h" "$PS2SDK/ports/lib/libnfs.a"
 
+    - name: Ensure smbman.irx for SMB1 (NETFS build)
+      if: matrix.netfs == '1'
+      run: |
+        bash scripts/ci/ensure_smbman.sh
+
     - name: Ensure scripts are executable
       run: |
-        chmod +x scripts/ci/resolve_make_args.sh scripts/ci/patch_fatfs_chinese.sh
+        chmod +x scripts/ci/resolve_make_args.sh scripts/ci/patch_fatfs_chinese.sh scripts/ci/ensure_smbman.sh
 
     - name: Compile wLaunchELF
       run: |
