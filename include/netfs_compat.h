@@ -33,8 +33,9 @@ extern int netfs_net_inited;
 
 /* fix30: initialise the EE-side NetMan/ps2ip framework. MUST be called before
  * loading smap.irx (the modern ps2smap registers itself with ps2ip on load).
- * Defined in smb2.c; idempotent. */
-void netfsInitTcpip(void);
+ * Defined in smb2.c; idempotent. Returns 0 (signature kept as int to match
+ * the definition in smb2.c). */
+int netfsInitTcpip(void);
 
 /* Status line shown by the file browser while visiting SMB:. Empty when at
  * least one share is mounted. Defined in smb2.c. */
