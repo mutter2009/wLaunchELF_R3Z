@@ -55,6 +55,15 @@ int smb2_last_error = SMB2_ERR_NONE;
 char smb2_diag_stage[96] = "";
 static int smb2_reload_pending = 0;
 
+/* fix29 DIAGNOSTIC ONLY: set the stage AND paint it. drawMsg is pure EE/GS
+ * drawing (no SIF), so when a later fileXioDevctl wedges the IOP the screen
+ * stays frozen on the last painted step, pinpointing the failing layer. */
+static void smbDiagPaint(const char *step)
+{
+	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "%s", step);
+	drawMsg(step);
+}
+
 void smb2_request_reload(void)
 {
 	smb2_reload_pending = 1;
@@ -244,8 +253,11 @@ static int smb1_logon(struct smb2_share *s)
 
 	/* fix16: never enter the unbounded LOGON devctl when the TCP port is
 	 * unreachable — that is what wedged the SIF channel and froze input. */
-	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "TCP探测 %s:%d",
-	         s->server, s->port);
+	{
+		char diagstep[96];
+		snprintf(diagstep, sizeof(diagstep), "29:TCP探测 %s:%d", s->server, s->port);
+		smbDiagPaint(diagstep);
+	}
 	if (!smb1_server_reachable(s->server, s->port)) {
 		DPRINTF("smb1: %s:%d unreachable (TCP probe), skipping LOGON\n",
 		        s->server, s->port);
@@ -257,8 +269,11 @@ static int smb1_logon(struct smb2_share *s)
 	}
 
 	smb1_build_logon(s, &logon, &openshare);
-	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "LOGON %s/%s",
-	         s->server, logon.User);
+	{
+		char diagstep[96];
+		snprintf(diagstep, sizeof(diagstep), "29:LOGON %s/%s", s->server, logon.User);
+		smbDiagPaint(diagstep);
+	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGON, &logon, sizeof(logon), NULL, 0);
 	if (ret < 0) {
 		DPRINTF("smb1: LOGON to %s failed: %d\n", s->server, ret);
@@ -285,7 +300,11 @@ static int smb1_open_share(struct smb2_share *s)
 		return 0;
 
 	smb1_build_logon(s, &logon, &openshare);
-	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "打开共享 %s", s->sharename);
+	{
+		char diagstep[96];
+		snprintf(diagstep, sizeof(diagstep), "29:打开共享 %s", s->sharename);
+		smbDiagPaint(diagstep);
+	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_OPENSHARE, &openshare, sizeof(openshare), NULL, 0);
 	if (ret < 0) {
 		DPRINTF("smb1: OPENSHARE %s failed: %d\n", s->sharename, ret);
@@ -563,7 +582,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 		netfs_net_inited = 1;
 	}
 
-	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "等待网线链路");
+	smbDiagPaint("29:等待网线链路");
 	DPRINTF("Waiting for connection...\n");
 	if (ethWaitValidNetIFLinkState() != 0) {
 		DPRINTF("Error: failed to get valid link status.\n");
@@ -573,7 +592,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	}
 	DPRINTF("Network Initialized\n");
 
-	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "读取SMB.CNF");
+	smbDiagPaint("29:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
 	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 	return rc;

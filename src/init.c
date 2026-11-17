@@ -375,6 +375,20 @@ static u8 have_dvrfile = 0;
 static u8 is_early_init = 1;
 static u8 done_setupPowerOff = 0;
 
+/* fix29 DIAGNOSTIC ONLY: publish the exact SMB bring-up step to both the
+ * status string and the screen. drawMsg() is pure EE/GS drawing (no SIF), so
+ * it remains visible even when the following SifExecModuleBuffer() wedges the
+ * IOP channel — the screen then freezes on the LAST step printed, which tells
+ * us precisely where the connect dies. No connection logic is changed here. */
+#ifdef NETFS
+static void smbDiagStep(const char *step)
+{
+	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "%s", step);
+	if (!is_early_init)
+		drawMsg(step);
+}
+#endif
+
 #define FILEXIO_RWBUF_NET_PRIMARY (128 * 1024)
 #define FILEXIO_RWBUF_NET_FALLBACK (64 * 1024)
 static u8 ps2kbd_opened = 0;
@@ -571,6 +585,9 @@ static void load_ps2dev9(void)
 	int ID, rcode;
 
 	if (!have_ps2dev9) {
+#ifdef NETFS
+		smbDiagStep("29:加载DEV9");
+#endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 		DPRINTF(" [DEV9]: ID=%d, ret=%d\n", ID, rcode);
 		ps2dev9_loaded = (ID >= 0 && rcode == 0);  //DEV9.IRX must have successfully loaded and returned RESIDENT END.
@@ -651,6 +668,9 @@ static void load_ps2ip(void)
 	int ret, ID __attribute__((unused));
 
 #if defined(ETH) && defined(UDPFS)
+#ifdef NETFS
+	smbDiagStep("29:切换ETH栈");
+#endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
 	load_ps2dev9();
@@ -662,6 +682,9 @@ static void load_ps2ip(void)
 #ifdef NETFS
 	/* NETMAN framework must be up before SMAP/PS2IP register with it. */
 	if (!have_netman) {
+#ifdef NETFS
+		smbDiagStep("29:加载NETMAN");
+#endif
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
 		have_netman = (ID >= 0 && ret >= 0);
@@ -671,6 +694,9 @@ static void load_ps2ip(void)
 #endif
 
 	if (!have_ps2ip) {
+#ifdef NETFS
+		smbDiagStep("29:加载PS2IP");
+#endif
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2ip = (ID >= 0 && ret >= 0);
@@ -678,6 +704,9 @@ static void load_ps2ip(void)
 			return;
 	}
 	if (!have_ps2smap) {
+#ifdef NETFS
+		smbDiagStep("29:加载SMAP");
+#endif
 		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx,
 		                    if_conf_len, &if_conf[0], &ret);
 		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
@@ -700,7 +729,9 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
+	smbDiagStep("29:加载SMBMAN前准备");
 	setupPowerOff();
+	smbDiagStep("29:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
 	have_smbman = (ID >= 0 && ret >= 0);
