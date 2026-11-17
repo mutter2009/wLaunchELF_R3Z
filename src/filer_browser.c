@@ -1112,15 +1112,15 @@ static int smbConnectScreen(void)
 	while (1) {
 		/* Refresh the current stage text (pure EE drawing). */
 		if (Timer() >= redraw_at) {
-			/* fix26: the "v26" tag is a self-check marker. If the user's
+			/* fix27: the "v27" tag is a self-check marker. If the user's
 			 * screenshot shows it, this exact build is running; if not,
 			 * the uploaded/compiled ELF is stale and we stop here instead of
 			 * chasing a non-existent code bug. */
 			if (smb2_diag_stage[0])
-				snprintf(msg, sizeof(msg), "v26 %s [%s]",
+				snprintf(msg, sizeof(msg), "v27 %s [%s]",
 				         LNG(SMB_Starting), smb2_diag_stage);
 			else
-				snprintf(msg, sizeof(msg), "v26 %s", LNG(SMB_Starting));
+				snprintf(msg, sizeof(msg), "v27 %s", LNG(SMB_Starting));
 			drawMsg(msg);
 			redraw_at = Timer() + 200;
 		}
@@ -1211,41 +1211,12 @@ int getFilePath(char *out, int cnfmode)
 	while (1) {
 
 #ifdef NETFS
-		/* fix25: SMB is now connected on a STANDALONE screen BEFORE we ever
-		 * try to list the SMB: directory. The old design listed an empty
-		 * folder first and relied on a time(NULL) watchdog running from the
-		 * browser loop - but both the watchdog's time() and the loop's pad
-		 * reads are SIF RPCs that deadlock against the connect worker, so the
-		 * stage text never appeared and the console froze. smbConnectScreen()
-		 * touches no SIF at all, shows the live stage, and hard-times-out on
-		 * the EE Timer(). On failure it returns 0 and we do the UDPFS-proven
-		 * IOP reset to release any wedged SIF before continuing. */
-		if (!strncmp(path, "SMB:", 4) &&
-		    !(netfs_async_state == NETFS_ASYNC_DONE &&
-		      smb2_last_error == SMB2_ERR_NONE)) {
-			if (!smbConnectScreen()) {
-				/* Failed/timeout/cancel: show why, reset IOP, stay at the
-				 * device list. Never fall into an empty SMB: folder. */
-				snprintf(msg0, sizeof(msg0), "%s",
-				         smb2_status_msg[0] ? smb2_status_msg
-				                            : LNG(SMB_Not_Connected));
-				browser_pushed = FALSE;
-				path[0] = '\0';
-				strcpy(cursorEntry, "SMB:");
-				netfs_clear_stack_flags();
-				rebootIopAndReloadCoreStackSilent();
-				browser_repos = TRUE;
-				browser_cd = TRUE;
-				event |= 2;
-			} else {
-				/* Connected: worker returned and SIF is free, re-list SMB:
-				 * so the mounted shares appear. getDir() takes its DONE
-				 * branch and readSMB2() can safely use fileXio now. */
-				browser_cd = TRUE;
-				browser_pushed = TRUE;
-				event |= 2;
-			}
-		}
+		/* fix27: the SMB connect gate now lives DOWN in the browser_cd block,
+		 * immediately BEFORE setFileList(). It used to be here at the TOP of
+		 * the loop, but setFileList() runs at the BOTTOM of the same pass —
+		 * so on the very keypress that entered "SMB:" the empty directory was
+		 * already listed and drawn BEFORE this gate could run. That was the
+		 * "先出空目录、再画 v26 连接文字" bug. See the browser_cd block. */
 #endif
 
 		//Pad response section
@@ -1763,12 +1734,40 @@ int getFilePath(char *out, int cnfmode)
 		}
 		//----- Process newly entered directory here (incl initial entry)
 		if (browser_cd) {
-			if (isGenericUsbRootPath(path)) {
-				usb_unit = prepareUsbRootBrowse();
-				if (usb_unit >= 0)
-					snprintf(path, sizeof(path), "usb%d:/", usb_unit);
+			int smb_gate_failed = 0;
+#ifdef NETFS
+			/* fix27 (UDPFS semantics): connect BEFORE opening the SMB: folder.
+			 * This gate sits immediately before setFileList(), so a failed
+			 * connect NEVER produces the empty ".."-only directory — exactly
+			 * like UDPFS, which does not enter its folder unless it connected.
+			 * On success: setFileList() below lists the real shares.
+			 * On failure: reset IOP, return to the device list, cursor on SMB:,
+			 * show the [stage] error — and SKIP setFileList("SMB:") entirely. */
+			if (!strncmp(path, "SMB:", 4) &&
+			    !(netfs_async_state == NETFS_ASYNC_DONE &&
+			      smb2_last_error == SMB2_ERR_NONE)) {
+				if (!smbConnectScreen()) {
+					snprintf(msg0, sizeof(msg0), "%s",
+					         smb2_status_msg[0] ? smb2_status_msg
+					                            : LNG(SMB_Not_Connected));
+					browser_pushed = FALSE;
+					netfs_clear_stack_flags();
+					rebootIopAndReloadCoreStackSilent();
+					path[0] = '\0';
+					strcpy(cursorEntry, "SMB:");
+					browser_repos = TRUE;
+					smb_gate_failed = 1;
+				}
 			}
-			browser_nfiles = setFileList(path, ext, files, cnfmode);
+#endif
+			if (!smb_gate_failed) {
+				if (isGenericUsbRootPath(path)) {
+					usb_unit = prepareUsbRootBrowse();
+					if (usb_unit >= 0)
+						snprintf(path, sizeof(path), "usb%d:/", usb_unit);
+				}
+				browser_nfiles = setFileList(path, ext, files, cnfmode);
+			}
 #ifdef UDPFS
 			if (udpfs_dir_open_failed) {
 				udpfs_dir_open_failed = 0;
