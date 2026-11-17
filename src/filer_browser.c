@@ -1039,6 +1039,112 @@ static void skipRootSpacerSelection(const char *path, FILEINFO *files, int nfile
 	}
 }
 
+#ifdef NETFS
+/* fix25: standalone SMB connect screen.
+ *
+ * Root cause of the previous 24 builds freezing on "正在启动 SMB 网络...":
+ * the old code started a connect worker and then went back into the normal
+ * browser loop. That loop calls waitPadReady()/readpad(), whose padGetState()
+ * / simPadKB() issue SYNCHRONOUS SIF RPCs. The worker simultaneously holds
+ * the single SIF channel doing SifExecModuleBuffer()/fileXioDevctl(LOGON).
+ * Two EE threads issuing SIF RPCs at once wedge each other; the main loop
+ * then never returns to the top, so the time(NULL)-based watchdog never runs
+ * and no stage text is ever drawn -> permanent empty folder + dead pad.
+ *
+ * This screen removes the contention entirely. While a connect is in
+ * progress it ONLY touches EE-local state:
+ *   - drawMsg()  -> GS/EE drawing, no IOP RPC
+ *   - Timer()    -> clock() on EE, no IOP RPC
+ *   - netfs_async_state / smb2_diag_stage / smb2_last_error -> EE memory
+ * Crucially, this loop does NOT call readpad()/padRead(): on PS2 those are
+ * SIF RPCs too, so reading the pad here would re-introduce the very deadlock
+ * we are removing. Cancelling mid-connect is therefore not offered; instead
+ * a 15s EE-side hard timeout always returns to the device list, where the
+ * gamepad is fully usable again. No fileXio(), time(), pad*() or Sif*() is
+ * called here. Once the worker finishes (or the timer expires) the screen
+ * returns and the caller does the UDPFS-proven IOP reset to free any wedged
+ * SIF before resuming the normal browser loop.
+ */
+/* fix25: build a user-visible failure line that carries the exact stage
+ * (TCP probe / LOGON / OPENSHARE / link / CNF), so one screenshot tells us
+ * precisely where a real PS2 failed instead of a generic "connect failed". */
+static void smbSetFailureMsg(void)
+{
+	const char *reason;
+
+	switch (smb2_last_error) {
+	case SMB2_ERR_NO_CNF:   reason = LNG(SMB_Err_No_CNF);   break;
+	case SMB2_ERR_NO_SHARE: reason = LNG(SMB_Err_No_Share); break;
+	case SMB2_ERR_LINK:     reason = LNG(SMB_Err_Link);     break;
+	case SMB2_ERR_CONNECT:  reason = LNG(SMB_Err_Connect);  break;
+	default:                reason = LNG(SMB_Not_Connected); break;
+	}
+	if (smb2_diag_stage[0])
+		snprintf(smb2_status_msg, sizeof(smb2_status_msg),
+		         "%s [%s]", reason, smb2_diag_stage);
+	else
+		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", reason);
+}
+
+/* Returns: 1 = connected (share list non-empty), 0 = failed/timeout. */
+static int smbConnectScreen(void)
+{
+	u64 deadline, redraw_at;
+	char msg[160];
+	int result = 0;
+
+	/* Already mounted (e.g. AUTO=1 at startup) - nothing to do. */
+	if (netfs_async_state == NETFS_ASYNC_DONE &&
+	    smb2_last_error == SMB2_ERR_NONE)
+		return 1;
+
+	/* Start a (fresh) background connect unless one is already running.
+	 * A previous attempt may have left state==DONE with an error; that must
+	 * still launch a new worker. reload=1 reuses an already-up network stack
+	 * (just re-read SMB.CNF), matching netfs_reconnect(). */
+	if (netfs_async_state != NETFS_ASYNC_CONNECTING)
+		netfs_connect_async(netfs_net_inited ? 1 : 0);
+
+	/* 15s hard ceiling, measured on the EE only. */
+	deadline = Timer() + 15000;
+	redraw_at = 0;
+
+	while (1) {
+		/* Refresh the current stage text (pure EE drawing). */
+		if (Timer() >= redraw_at) {
+			if (smb2_diag_stage[0])
+				snprintf(msg, sizeof(msg), "%s  [%s]",
+				         LNG(SMB_Starting), smb2_diag_stage);
+			else
+				snprintf(msg, sizeof(msg), "%s", LNG(SMB_Starting));
+			drawMsg(msg);
+			redraw_at = Timer() + 200;
+		}
+
+		/* Worker really returned (SIF free) - publish its result. */
+		if (netfs_async_state == NETFS_ASYNC_DONE &&
+		    !netfs_async_worker_busy) {
+			result = (smb2_last_error == SMB2_ERR_NONE);
+			if (!result)
+				smbSetFailureMsg();
+			break;
+		}
+
+		/* EE-side hard timeout - do NOT wait for the stuck worker. */
+		if (Timer() >= deadline) {
+			result = 0;
+			smb2_last_error = SMB2_ERR_CONNECT;
+			smbSetFailureMsg();
+			break;
+		}
+
+		waitUntilTimer(Timer() + 20);  /* pure-EE busy wait, yields to worker */
+	}
+
+	return result;
+}
+#endif  /* NETFS */
+
 int getFilePath(char *out, int cnfmode)
 {
 	char path[MAX_PATH], cursorEntry[MAX_PATH],
@@ -1091,23 +1197,40 @@ int getFilePath(char *out, int cnfmode)
 	while (1) {
 
 #ifdef NETFS
-		/* fix14 watchdog: if the background LOGON is stuck on an unreachable
-		 * server, force the state to DONE after a few seconds so the browser
-		 * becomes interactive again and shows the error, instead of freezing
-		 * forever on "正在启动 SMB 网络...". */
-		if (!strncmp(path, "SMB:", 4) && netfs_async_state == NETFS_ASYNC_CONNECTING)
-			netfs_async_watchdog();
-
-		/* A background SMB connect just finished. Re-read the directory so
-		 * the mounted shares appear (or the error line updates) without the
-		 * user having to leave and re-enter SMB 网络. On failure getDir()
-		 * sets smb2_dir_open_failed and the post-setFileList fallback block
-		 * returns us to the device root list (UDPFS-style) instead of leaving
-		 * the user staring at an empty folder while a stuck worker holds SIF. */
-		if (!strncmp(path, "SMB:", 4) && netfs_async_consume_completion()) {
-			browser_cd = TRUE;
-			browser_pushed = TRUE; /* make the result/error line visible */
-			event |= 2;
+		/* fix25: SMB is now connected on a STANDALONE screen BEFORE we ever
+		 * try to list the SMB: directory. The old design listed an empty
+		 * folder first and relied on a time(NULL) watchdog running from the
+		 * browser loop - but both the watchdog's time() and the loop's pad
+		 * reads are SIF RPCs that deadlock against the connect worker, so the
+		 * stage text never appeared and the console froze. smbConnectScreen()
+		 * touches no SIF at all, shows the live stage, and hard-times-out on
+		 * the EE Timer(). On failure it returns 0 and we do the UDPFS-proven
+		 * IOP reset to release any wedged SIF before continuing. */
+		if (!strncmp(path, "SMB:", 4) &&
+		    !(netfs_async_state == NETFS_ASYNC_DONE &&
+		      smb2_last_error == SMB2_ERR_NONE)) {
+			if (!smbConnectScreen()) {
+				/* Failed/timeout/cancel: show why, reset IOP, stay at the
+				 * device list. Never fall into an empty SMB: folder. */
+				snprintf(msg0, sizeof(msg0), "%s",
+				         smb2_status_msg[0] ? smb2_status_msg
+				                            : LNG(SMB_Not_Connected));
+				browser_pushed = FALSE;
+				path[0] = '\0';
+				strcpy(cursorEntry, "SMB:");
+				netfs_clear_stack_flags();
+				rebootIopAndReloadCoreStackSilent();
+				browser_repos = TRUE;
+				browser_cd = TRUE;
+				event |= 2;
+			} else {
+				/* Connected: worker returned and SIF is free, re-list SMB:
+				 * so the mounted shares appear. getDir() takes its DONE
+				 * branch and readSMB2() can safely use fileXio now. */
+				browser_cd = TRUE;
+				browser_pushed = TRUE;
+				event |= 2;
+			}
 		}
 #endif
 
