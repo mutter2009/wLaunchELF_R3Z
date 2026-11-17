@@ -1100,7 +1100,10 @@ int getFilePath(char *out, int cnfmode)
 
 		/* A background SMB connect just finished. Re-read the directory so
 		 * the mounted shares appear (or the error line updates) without the
-		 * user having to leave and re-enter SMB 网络. */
+		 * user having to leave and re-enter SMB 网络. On failure getDir()
+		 * sets smb2_dir_open_failed and the post-setFileList fallback block
+		 * returns us to the device root list (UDPFS-style) instead of leaving
+		 * the user staring at an empty folder while a stuck worker holds SIF. */
 		if (!strncmp(path, "SMB:", 4) && netfs_async_consume_completion()) {
 			browser_cd = TRUE;
 			browser_pushed = TRUE; /* make the result/error line visible */
@@ -1637,6 +1640,34 @@ int getFilePath(char *out, int cnfmode)
 				rebootIopAndReloadCoreStackSilent();
 				path[0] = '\0';
 				strcpy(cursorEntry, "udpfs:");
+				browser_repos = TRUE;
+				browser_nfiles = setFileList(path, ext, files, cnfmode);
+			}
+#endif
+#ifdef NETFS
+			/* fix23: mirror the UDPFS fallback. A failed SMB connect must not
+			 * leave the user inside an empty SMB: folder — that empty folder
+			 * is exactly where a still-stuck worker's SIF channel froze all
+			 * input a few seconds later. Return to the device root list with
+			 * the cursor on "SMB 网络" and show the prepared error line.
+			 *
+			 * Do NOT reset the IOP here (unlike UDPFS): the background worker
+			 * may still own SIF inside LOGON, and Reset() from the GUI thread
+			 * would queue behind it and freeze the console (fix14). The next
+			 * entry into SMB 网络 reuses the DONE state and re-reads the CNF,
+			 * so a retry still works without an IOP reset. */
+			if (smb2_dir_open_failed) {
+				smb2_dir_open_failed = 0;
+				snprintf(msg0, sizeof(msg0), "%s",
+				         smb2_status_msg[0] ? smb2_status_msg : LNG(SMB_Not_Connected));
+				browser_pushed = FALSE;
+				/* Allow a fresh connect the next time "SMB 网络" is opened —
+				 * but only once the failed worker has really returned, so a
+				 * second worker never overlaps the one still holding SIF. */
+				if (!netfs_async_worker_busy)
+					netfs_async_state = NETFS_ASYNC_IDLE;
+				path[0] = '\0';
+				strcpy(cursorEntry, "SMB:");
 				browser_repos = TRUE;
 				browser_nfiles = setFileList(path, ext, files, cnfmode);
 			}

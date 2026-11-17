@@ -142,6 +142,9 @@ int host_use_Bsl = 1;  //By default assume that host paths use backslash
 #ifdef UDPFS
 int udpfs_dir_open_failed = 0;
 #endif
+#ifdef NETFS
+int smb2_dir_open_failed = 0;
+#endif
 u64 written_size;            //Used for pasting progress report
 u64 PasteTime;               //Used for pasting progress report
 
@@ -1600,6 +1603,12 @@ int getDir(const char *path, FILEINFO *info)
 			 * is; OPL likewise shows an explicit startup error code. */
 			if (smb2_shares == NULL) {
 				const char *reason;
+
+				/* fix23: mirror UDPFS — a failed connect must not strand the
+				 * user inside an empty SMB: folder. The browser checks this
+				 * flag after setFileList() and falls back to the device root
+				 * list, so no fileXio call can queue behind a stuck worker. */
+				smb2_dir_open_failed = 1;
 
 				switch (smb2_last_error) {
 				case SMB2_ERR_NO_CNF:

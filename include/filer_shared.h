@@ -101,6 +101,13 @@ extern int host_elflist;
 #ifdef UDPFS
 extern int udpfs_dir_open_failed;
 #endif
+#ifdef NETFS
+/* fix23: set by getDir() when a background SMB connect finished with no
+ * mounted share. The browser then falls back to the device root list (like
+ * UDPFS does) instead of stranding the user in an empty SMB: folder while a
+ * stuck worker still owns SIF. */
+extern int smb2_dir_open_failed;
+#endif
 
 int getDir(const char *path, FILEINFO *info);
 int pollRootMemoryCardDevices(void);

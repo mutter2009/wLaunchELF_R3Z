@@ -478,4 +478,4 @@ lang(476, SMB_Reconnect_Deferred, "设置已保存，进入 SMB 网络时连接"
 lang(477, SMB_Err_No_CNF, "未找到 SMB.CNF，请先保存设置")
 lang(478, SMB_Err_No_Share, "SMB 共享名为空，请填写")
 lang(479, SMB_Err_Link, "网线未连接，请检查网线/适配器")
-lang(480, SMB_Err_Connect, "SMB 连接失败：IP/共享名/账号 或 SMB2-3")
+lang(480, SMB_Err_Connect, "SMB1 连接失败：IP/共享名/账号 或 SMB1")
