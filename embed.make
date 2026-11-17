@@ -652,13 +652,16 @@ $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 
 # ETH stack policy:
-# Preserve historical wLaunchELF SMAP preference/order first, then fallback
-# to current PS2SDK variants.
+# FIX31: use the repo's pinned ps2smap.irx (the POPStarter/OPL-lineage driver
+# that loads without waiting on the ps2ip NetIF link event). This is the ONLY
+# variant that does not wedge SifExecModuleBuffer() right after "加载SMAP" on
+# this setup. It MUST take priority over $(PS2DEV)/ps2eth/smap/ps2smap.irx,
+# which is otherwise picked first in CI and reintroduces the hang.
 PS2SMAP_SOURCE :=
-ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
-else ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
+ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
 PS2SMAP_SOURCE := iop/__precompiled/ps2smap.irx
+else ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
+PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/ps2smap.irx),)
 PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/smap-ps2ip.irx),)
