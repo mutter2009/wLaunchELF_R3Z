@@ -31,6 +31,11 @@ static inline void clear_mcTable(sceMcTblGetDir *mcT)
  * idempotency guard shared between smb2.c and nfs.c. */
 extern int netfs_net_inited;
 
+/* fix30: initialise the EE-side NetMan/ps2ip framework. MUST be called before
+ * loading smap.irx (the modern ps2smap registers itself with ps2ip on load).
+ * Defined in smb2.c; idempotent. */
+void netfsInitTcpip(void);
+
 /* Status line shown by the file browser while visiting SMB:. Empty when at
  * least one share is mounted. Defined in smb2.c. */
 extern char smb2_status_msg[128];

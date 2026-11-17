@@ -564,23 +564,40 @@ int smb2_reload(void)
 	return smb2LoadAllCNF();
 }
 
-int init_smb2(const char *ip, const char *netmask, const char *gw)
+/* fix30: NetMan/ps2ip framework init is split out so it can run BEFORE the
+ * smap.irx module is loaded. The modern ps2smap.irx embedded here registers
+ * itself with ps2ip ("NetIF added to ps2ip") during its load; if ps2ipInit()
+ * has not run yet, that registration waits forever and SifExecModuleBuffer()
+ * never returns -> the silent freeze right after "加载SMAP". OPL avoids this
+ * by initialising the EE-side framework first. Idempotent via netfs_net_inited. */
+int netfsInitTcpip(void)
 {
 	struct ip4_addr IP, NM, GW;
 	int ip4[4];
+
+	if (netfs_net_inited)
+		return 0;
+
+	NetManInit();
+	sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
+	sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], ip4[3]);
+	sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], ip4[3]);
+	ps2ipInit(&IP, &NM, &GW);
+	netfs_net_inited = 1;
+	return 0;
+}
+
+int init_smb2(const char *ip, const char *netmask, const char *gw)
+{
 	int rc;
 
-	if (!netfs_net_inited) {
-		NetManInit();
-		sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
-		sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], ip4[3]);
-		sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], ip4[3]);
-		ps2ipInit(&IP, &NM, &GW);
-		netfs_net_inited = 1;
-	}
+	/* fix30: framework init now happens earlier (before smap.irx load) in
+	 * load_ps2ip(); keep the call for safety on paths that reach init_smb2()
+	 * directly. It is a no-op once netfs_net_inited is set. */
+	netfsInitTcpip();
 
 	smbDiagPaint("29:等待网线链路");
 	DPRINTF("Waiting for connection...\n");
