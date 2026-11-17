@@ -1112,11 +1112,15 @@ static int smbConnectScreen(void)
 	while (1) {
 		/* Refresh the current stage text (pure EE drawing). */
 		if (Timer() >= redraw_at) {
+			/* fix26: the "v26" tag is a self-check marker. If the user's
+			 * screenshot shows it, this exact build is running; if not,
+			 * the uploaded/compiled ELF is stale and we stop here instead of
+			 * chasing a non-existent code bug. */
 			if (smb2_diag_stage[0])
-				snprintf(msg, sizeof(msg), "%s  [%s]",
+				snprintf(msg, sizeof(msg), "v26 %s [%s]",
 				         LNG(SMB_Starting), smb2_diag_stage);
 			else
-				snprintf(msg, sizeof(msg), "%s", LNG(SMB_Starting));
+				snprintf(msg, sizeof(msg), "v26 %s", LNG(SMB_Starting));
 			drawMsg(msg);
 			redraw_at = Timer() + 200;
 		}
@@ -1138,7 +1142,17 @@ static int smbConnectScreen(void)
 			break;
 		}
 
-		waitUntilTimer(Timer() + 20);  /* pure-EE busy wait, yields to worker */
+		/* fix26 CRITICAL: this GUI thread runs at priority 0, the connect
+		 * worker at priority 3. A bare busy-wait here NEVER yields the CPU,
+		 * so the worker is starved, init_netfs() does not run, no stage text
+		 * is ever set and the state stays CONNECTING forever -> the exact
+		 * "empty folder, no stage text, frozen" symptom. DelayThread() gives
+		 * the worker CPU while keeping this loop free of SIF RPCs (DelayThread
+		 * and Timer are both EE-local). This is the yield that the old design
+		 * got implicitly from waitPadReady()'s sleeps, which we removed.
+		 * 2ms is short enough for a responsive stage display and long enough
+		 * for the worker to make progress. */
+		DelayThread(2000);
 	}
 
 	return result;
