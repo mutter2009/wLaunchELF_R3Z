@@ -1645,29 +1645,33 @@ int getFilePath(char *out, int cnfmode)
 			}
 #endif
 #ifdef NETFS
-			/* fix23: mirror the UDPFS fallback. A failed SMB connect must not
-			 * leave the user inside an empty SMB: folder — that empty folder
-			 * is exactly where a still-stuck worker's SIF channel froze all
-			 * input a few seconds later. Return to the device root list with
-			 * the cursor on "SMB 网络" and show the prepared error line.
+			/* fix24: mirror the UDPFS fallback EXACTLY. fix23 tried to skip the
+			 * IOP reset (fearing fix14) and that was wrong: a failed SMB1 LOGON
+			 * is a synchronous IOP fileXio RPC with no timeout — it keeps the
+			 * single SIF channel occupied even after the GUI shows "failed".
+			 * Back at the device list the browser keeps issuing SIF RPCs
+			 * (memory-card polling, free-space queries), they queue behind the
+			 * stuck LOGON and the console dies a few seconds later. That is the
+			 * exact "推到主设备列表然后卡死" symptom.
 			 *
-			 * Do NOT reset the IOP here (unlike UDPFS): the background worker
-			 * may still own SIF inside LOGON, and Reset() from the GUI thread
-			 * would queue behind it and freeze the console (fix14). The next
-			 * entry into SMB 网络 reuses the DONE state and re-reads the CNF,
-			 * so a retry still works without an IOP reset. */
+			 * UDPFS solves this by doing a full IOP reset on failure, which
+			 * kills every IOP module and frees the wedged SIF channel. We now
+			 * do the same. Reset() (SifIopReset) is a low-level SIF command,
+			 * NOT a fileXio RPC, so it does not queue behind the stuck LOGON —
+			 * fix14's freeze was synchronous module LOADING on the GUI thread,
+			 * a different thing. netfs_clear_stack_flags() clears every cached
+			 * "loaded" flag so the next visit re-loads smbman and retries. */
 			if (smb2_dir_open_failed) {
 				smb2_dir_open_failed = 0;
 				snprintf(msg0, sizeof(msg0), "%s",
 				         smb2_status_msg[0] ? smb2_status_msg : LNG(SMB_Not_Connected));
 				browser_pushed = FALSE;
-				/* Allow a fresh connect the next time "SMB 网络" is opened —
-				 * but only once the failed worker has really returned, so a
-				 * second worker never overlaps the one still holding SIF. */
-				if (!netfs_async_worker_busy)
-					netfs_async_state = NETFS_ASYNC_IDLE;
 				path[0] = '\0';
 				strcpy(cursorEntry, "SMB:");
+				/* Kill the stuck IOP-side LOGON and reload core drivers,
+				 * exactly like the UDPFS path a few lines above. */
+				netfs_clear_stack_flags();
+				rebootIopAndReloadCoreStackSilent();
 				browser_repos = TRUE;
 				browser_nfiles = setFileList(path, ext, files, cnfmode);
 			}

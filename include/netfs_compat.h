@@ -35,6 +35,13 @@ extern int netfs_net_inited;
  * least one share is mounted. Defined in smb2.c. */
 extern char smb2_status_msg[128];
 
+/* fix24: a short, human-readable description of the exact step the SMB1
+ * connect worker is currently in (e.g. "TCP probe 192.168.1.1:445",
+ * "LOGON GUEST", "OPENSHARE ps2"). Updated by smb2.c at each stage and shown
+ * on screen when the watchdog fires, so a stuck/ failing step is visible
+ * instead of a generic "connect failed". Defined in smb2.c. */
+extern char smb2_diag_stage[96];
+
 /* OPL-style startup status codes (OPL uses gNetworkStartup +
  * ethDisplayErrorStatus()). Instead of an unexplained empty SMB folder, the
  * GUI now reports WHY the mount failed. Defined in smb2.c. */
@@ -105,6 +112,13 @@ int netfs_reconnect(void);
 
 /* Returns 1 if SMB.CNF carries AUTO=1 (connect at startup), else 0. */
 int netfs_autostart_enabled(void);
+
+/* fix24: called from the GUI thread AFTER a failed SMB connect, before
+ * rebootIopAndReloadCoreStackSilent(). Clears every cached NETFS flag so the
+ * next visit re-loads smbman and re-initialises NetMan/ps2ip from scratch.
+ * Without this, an IOP reset leaves have_smbman/netfs_net_inited set and the
+ * next connect silently skips loading the driver -> permanent failure. */
+void netfs_clear_stack_flags(void);
 
 #endif /* NETFS_COMPAT_H */
 //---------------------------------------------------------------------------

@@ -283,7 +283,14 @@ void netfs_async_watchdog(void)
 		return;
 
 	smb2_last_error = SMB2_ERR_CONNECT;
-	snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", LNG(SMB_Err_Connect));
+	/* fix24: show the EXACT step that stalled (TCP探测 / LOGON / 打开共享 /
+	 * 等待网线 / 读取SMB.CNF). This is the whole point of the diagnostics:
+	 * one screenshot now tells us which layer to fix instead of guessing. */
+	if (smb2_diag_stage[0])
+		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s [%s]",
+		         LNG(SMB_Err_Connect), smb2_diag_stage);
+	else
+		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", LNG(SMB_Err_Connect));
 	/* fix16: mark this as a watchdog timeout. consume_completion() will hide
 	 * the generation bump so the browser does not re-enter setFileList() —
 	 * the worker may still be stuck in fileXio and a second RPC there would
@@ -316,6 +323,25 @@ int netfs_async_consume_completion(void)
 		return 1;
 	}
 	return 0;
+}
+
+/* fix24: after a FAILED connect the GUI does a full IOP reset (the same
+ * UDPFS-proven recovery). Reset() unloads every IOP module, so all cached
+ * "already loaded/initialised" flags MUST be cleared or the next visit will
+ * skip reloading smbman and fail forever. Called from the GUI thread just
+ * before rebootIopAndReloadCoreStackSilent(). */
+void netfs_clear_stack_flags(void)
+{
+	have_netman = 0;
+	have_smbman = 0;
+	have_ps2ip = 0;
+	netfs_net_inited = 0;
+	/* Abandon any worker still stuck in LOGON: bump generation so it can
+	 * never publish a stale DONE after the reset, and mark it not-busy. */
+	netfs_async_generation++;
+	netfs_async_worker_busy = 0;
+	netfs_async_state = NETFS_ASYNC_IDLE;
+	smb2_diag_stage[0] = '\0';
 }
 #endif
 

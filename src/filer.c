@@ -1627,7 +1627,13 @@ int getDir(const char *path, FILEINFO *info)
 					reason = LNG(SMB_Not_Connected);
 					break;
 				}
-				snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", reason);
+				/* fix24: append the exact failing stage so a quick failure
+				 * (no watchdog) is just as diagnostic as a timeout. */
+				if (smb2_diag_stage[0])
+					snprintf(smb2_status_msg, sizeof(smb2_status_msg),
+					         "%s [%s]", reason, smb2_diag_stage);
+				else
+					snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s", reason);
 			} else
 				smb2_status_msg[0] = '\0';
 			n = readSMB2(path, info, max);
