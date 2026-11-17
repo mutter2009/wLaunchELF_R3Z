@@ -19,7 +19,8 @@ IMPORT_BIN2C(ps2ftpd_irx);
 
 #ifdef NETFS
 IMPORT_BIN2C(netman_irx);
-/* fix17: smbman.irx removed — libsmb2 (SMB2) connects in EE space now. */
+/* SMB1 (smbman) client: registers the smb: fileXio device, same as OPL. */
+IMPORT_BIN2C(smbman_irx);
 #endif
 
 #ifdef UDPFS
@@ -144,9 +145,10 @@ static int vmcman_last_error = 0;
 #include <smb2.h>
 #include <nfs.h>
 static u8 have_netman = 0;
+static u8 have_smbman = 0;
 
-/* fix17: smbman removed; only ps2ip stays. */
 static void load_ps2ip(void);
+static void load_smbman(void);
 
 /* OPL-style background SMB connect state (declared in netfs_compat.h).
  * The worker owns smb2_shares / smb2_last_error / smb2_status_msg while
@@ -295,35 +297,21 @@ int netfs_async_consume_completion(void)
 {
 	static int seen_generation = 0;
 
-	/* fix21: the watchdog flips state=DONE at 12s but the worker thread can
-	 * still be alive inside load_ps2ip()/smb2_connect_share(), mutating and
-	 * freeing smb2_shares from the other thread. Reporting completion there
-	 * makes the browser call setFileList()->readSMB2() and walk that list
-	 * concurrently — the heap/list race that freezes the GUI a few seconds
-	 * after "connect failed" appears. Hold completion back until the worker
-	 * has really returned (worker_busy == 0). The error text was already
-	 * written to smb2_status_msg by the watchdog, so it stays visible. */
-	if (netfs_async_worker_busy)
-		return 0;
-
+	/* SMB1 backend: the worker's LOGON/OPENSHARE run as synchronous IOP
+	 * devctls. When the watchdog forces DONE on an unreachable server, the
+	 * TCP pre-check has already made the worker exit fast, and a root-level
+	 * re-list only walks the (stable) in-memory share list — no fileXio.
+	 * So we DO report the watchdog completion here, otherwise the browser
+	 * never repaints and the "connect failed" line stays invisible (the
+	 * fix21 busy-guard regression). Input stays alive via pad.c's guard. */
 	if (netfs_async_generation != seen_generation) {
 		seen_generation = netfs_async_generation;
-		/* fix19: NEVER swallow a watchdog-forced DONE any more.
-		 *
-		 * fix16 swallowed it because the old SMB1 backend's stuck
-		 * fileXioDevctl(LOGON) owned the shared fileXio/SIF channel: a
-		 * second setFileList() -> fileXio directory listing would then block
-		 * the GUI thread forever and kill pad input.
-		 *
-		 * That backend is gone. libsmb2 runs on EE-side lwIP sockets and
-		 * never holds the fileXio RPC channel, so re-listing here is safe.
-		 * Swallowing was exactly why the browser sat on "正在启动 SMB 网络"
-		 * forever after a timeout: no refresh ran, so the already-prepared
-		 * error line was never shown and the UI looked frozen.
-		 *
-		 * A late worker still cannot overwrite this result: netfsAsyncThread
-		 * only publishes DONE when started_gen == netfs_async_generation,
-		 * and the watchdog bumped generation. */
+		/* Report every completed connect, including a watchdog-forced DONE,
+		 * so the browser repaints the prepared "connect failed" line.
+		 * Swallowing it is what left the UI stuck on "正在启动 SMB 网络".
+		 * A late worker cannot overwrite this: netfsAsyncThread only
+		 * publishes DONE when started_gen == netfs_async_generation, and the
+		 * watchdog has already bumped generation. */
 		netfs_async_watchdog_fired = 0;
 		return 1;
 	}
@@ -676,9 +664,26 @@ static void load_ps2ip(void)
 //---------------------------------------------------------------------------
 
 #ifdef NETFS
-/* fix17: load_smbman() removed. libsmb2 runs in EE space on top of ps2ip;
- * no smb: IOP device or LOGON/OPENSHARE devctl is needed any more.
- * NOTE: init_netfs() and netfs_reconnect() stay inside #ifdef NETFS (closed
+/* SMB1 client: loads the smbman IOP module which registers the "smb:"
+ * fileXio device. Must run after DEV9/NETMAN/SMAP/PS2IP (load_ps2ip) and
+ * before init_smb2() issues LOGON/OPENSHARE devctls. setupPowerOff() mirrors
+ * upstream wLE and avoids a stall the first time smb: is opened. */
+static void load_smbman(void)
+{
+	int ret, ID __attribute__((unused));
+
+	if (have_smbman)
+		return;
+	setupPowerOff();
+	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
+	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
+	have_smbman = (ID >= 0 && ret >= 0);
+}
+//------------------------------
+//endfunc load_smbman
+//---------------------------------------------------------------------------
+
+/* NOTE: init_netfs() and netfs_reconnect() stay inside #ifdef NETFS (closed
  * at the end of this block) — do NOT add a stray #endif here. */
 //---------------------------------------------------------------------------
 int init_netfs(void)
@@ -706,7 +711,8 @@ int init_netfs(void)
 		DPRINTF(" [NETFS]: network stack unavailable, aborting\n");
 		return -1;
 	}
-	/* fix17: libsmb2 connects in EE space — no smbman module to load. */
+	/* Load the SMB1 client driver before init_smb2() issues LOGON/OPENSHARE. */
+	load_smbman();
 	init_smb2(ip, netmask, gw);
 	return 0;
 }

@@ -4,14 +4,18 @@
 //---------------------------------------------------------------------------
 #include "netfs_compat.h"
 
-/* One configured SMB share. Restored to the original libsmb2 layout (fix17). */
+/* One configured SMB share.
+ * SMB1 (smbman) backend: the URL is parsed into server/port/sharename once at
+ * CNF load time so LOGON/OPENSHARE devctls can use them. Layout/UI untouched. */
 struct smb2_share {
         struct smb2_share *next;
-        struct smb2_context *smb2;
         char *name;
         const char *user;
         const char *password;
         char *url;
+        char server[64];
+        int port;
+        char sharename[256];
 };
 
 extern struct smb2_share *smb2_shares;
@@ -25,8 +29,7 @@ int SMB2unlink(const char *dir);
 int SMB2rename(const char *path, const char *newpath);
 
 struct SMB2FH {
-        struct smb2_context *smb2;
-        struct smb2fh *fh;
+        int fd;   /* fileXio handle on the smb: device (SMB1 backend) */
 };
 struct SMB2FH *SMB2open(const char *path, int mode);
 int SMB2close(struct SMB2FH *fh);

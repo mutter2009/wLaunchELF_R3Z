@@ -177,12 +177,14 @@ ifeq ($(ETH),1)
     EE_OBJS += ps2smap_irx.o ps2ftpd_irx.o ps2host_irx.o ps2netfs_irx.o ps2ip_irx.o
     EE_CFLAGS += -DETH
 ifeq ($(NETFS),1)
-    # fix17: back to the original libsmb2 (SMB2) backend. netfs_shim.o and
-    # smbman_irx.o are removed: libsmb2 supplies poll()/gethostname() and
-    # connects in EE space, so neither shim nor the SMB1 IOP module is needed.
-    EE_OBJS += smb2.o nfs.o netman_irx.o
+    # SMB1 backend: smb2.c drives the "smb:" fileXio device provided by the
+    # smbman IOP module (same driver OPL uses). No EE-side libsmb2 needed.
+    # netman/ps2ip stay for NFS + the TCP reachability pre-check.
+    # netfs_shim.o supplies poll()/gethostname() that libnfs' PS2 port needs
+    # (previously provided by libsmb2, which the SMB1 backend no longer links).
+    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o
     EE_CFLAGS += -DNETFS
-    EE_LIBS += -lsmb2 -lnfs -lps2ip -lnetman
+    EE_LIBS += -lnfs -lps2ip -lnetman
     HAS_ETH = -ETH
 endif
 ifeq ($(UDPFS),1)

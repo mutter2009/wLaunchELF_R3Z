@@ -689,8 +689,14 @@ endif
 $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ netman_irx
 
-# fix17: smbman.irx (SMB1 client) removed — libsmb2 (SMB2) connects in EE
-# space, so no smb: IOP device module is embedded any more.
+# SMB1 backend: embed smbman.irx, the IOP module that registers the "smb:"
+# fileXio device (the exact driver Open PS2 Loader uses). Ships with PS2SDK.
+SMBMAN_SOURCE := $(PS2SDK)/iop/irx/smbman.irx
+ifeq ($(wildcard $(SMBMAN_SOURCE)),)
+$(error Missing $(SMBMAN_SOURCE). smbman.irx is required for NETFS/SMB1; update the PS2SDK/toolchain container)
+endif
+$(EE_ASM_DIR)smbman_irx.s: $(SMBMAN_SOURCE) | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ smbman_irx
 endif
 
 $(EE_ASM_DIR)ps2host_irx.s: iop/ps2host.irx | $(EE_ASM_DIR)

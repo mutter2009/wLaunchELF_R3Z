@@ -2,20 +2,24 @@
 //---------------------------------------------------------------------------
 //File name:   smb2.c
 //---------------------------------------------------------------------------
-/* fix17: back to the original, proven libsmb2 (SMB2) backend.
+/* SMB network file browser backend.
  *
- * fix13..16 replaced this with the SMB1 smbman.irx backend to match OPL, but
- * it never connected on the user's Samba share and each workaround (worker
- * thread, watchdog, generation tokens, TCP pre-probe, no re-list) only moved
- * the freeze around. The user's mature, working tools are SMB2FM (SMB2), so
- * SMB2 is the correct protocol here. This file restores the original libsmb2
- * implementation and adds ONE crucial fix the original lacked:
- * smb2_set_timeout(), so an unreachable server fails in seconds instead of
- * hanging the EE thread forever.
+ * HISTORY / WHY THIS REWRITE EXISTS
+ * ---------------------------------
+ * This file used to be a libsmb2 (SMB2/3) client. On real hardware it could
+ * not talk to the SMB1-only Samba / router-USB shares that Open PS2 Loader
+ * connects to fine, and libsmb2's PS2 port has no working command timeout:
+ * smb2_connect_share() hung the whole GUI for over a minute. Moving that
+ * call to a worker thread only hid the freeze - the mount still failed.
  *
- * All public symbols, struct names, language strings, settings pages and the
- * (already finished) layout are unchanged. The async framework in init.c /
- * filer*.c is kept: it simply wraps this backend in a worker thread.
+ * It is now an SMB1 (CIFS) client built on the PS2SDK "smbman" IOP module,
+ * the exact same driver OPL uses. smbman registers the "smb" iomanX device,
+ * has its own keepalive/auto-relogin, and once LOGON + OPENSHARE succeed the
+ * share is just a normal device: all reads/writes go through fileXio*().
+ *
+ * IMPORTANT: every symbol declared in smb2.h keeps its original name and
+ * signature. filer.c / filer_fileops.c / the settings pages / the language
+ * tables / the (already finished) layout are therefore completely unchanged.
  */
 #include <debug.h>
 #include <netman.h>
@@ -36,37 +40,10 @@
 #include <launchelf.h>
 #include <sbv_patches.h>
 #include <smb2.h>
+#include <ps2smb.h>
 #include <filer_shared.h>
 
-/* fix18c: the PS2SDK's libsmb2.h uses SMB2_GUID_SIZE (line 461) and the
- * smb2_lease_key type (line 726) but does not include the header that defines
- * them (smb2/smb2.h). Newer GCC errors out on this. Include it first so the
- * two symbols are declared before libsmb2.h uses them. */
-#include <smb2/smb2.h>
-#include <smb2/libsmb2.h>
-
-/* fix18d: libsmb2.a calls gethostname() (nm: "U gethostname" in libsmb2.c.obj)
- * but neither libsmb2.a nor the PS2SDK defines it, so the final link fails
- * with "undefined reference to gethostname". wLaunchELF is an SMB client only
- * (the server path that reads the hostname never runs), so a harmless static
- * value is enough — the symbol just has to exist to satisfy the linker.
- * Signature matches newlib's <sys/unistd.h> declaration. poll() is NOT
- * defined here: libsmb2.a supplies its own (compat.c.obj: "T poll"). */
-int gethostname(char *name, size_t len)
-{
-	static const char host[] = "PlayStation2";
-	size_t n = sizeof(host) - 1;
-
-	if (name == NULL || len == 0)
-		return -1;
-	if (n >= len)
-		n = len - 1;
-	memcpy(name, host, n);
-	name[n] = '\0';
-	return 0;
-}
-
-#define discard_const(ptr) ((void *)((intptr_t)(ptr)))
+#define SMB_DEV "smb:"
 
 struct smb2_share *smb2_shares = NULL;
 
@@ -74,73 +51,6 @@ struct smb2_share *smb2_shares = NULL;
 char smb2_status_msg[128] = "";
 int smb2_last_error = SMB2_ERR_NONE;
 static int smb2_reload_pending = 0;
-
-/* Shared NETFS network-init guard (also referenced by nfs.c). */
-int netfs_net_inited = 0;
-
-/* Seconds before libsmb2 aborts a stalled command (connect included). The
- * original code never set this (default 0 = wait forever) — that is why a
- * dead/unreachable server froze the UI on "正在启动 SMB 网络...". */
-#define SMB2_COMMAND_TIMEOUT_SEC 6
-
-/* fix18: belt-and-braces TCP reachability probe.
- * smb2_set_timeout() bounds libsmb2 command timeouts, but on the PS2 port the
- * initial socket connect() can still stall on a firewall that drops SYN
- * packets (no RST), which a timeout alone does not always rescue. A bounded
- * non-blocking connect + select() lets an unreachable host fail in ~2.5s and
- * keeps the GUI responsive. This is the same proven probe fix16 used for
- * smbman; port 445 is fixed because libsmb2's URL has no port field.
- * Returns 1 = reachable (or a hostname we cannot probe, let libsmb2 resolve),
- *         0 = definitively unreachable within the timeout. */
-#define SMB2_PROBE_TIMEOUT_MS 2500
-static int smb2_server_reachable(const char *server)
-{
-	struct sockaddr_in addr;
-	struct timeval tv;
-	fd_set wfds, rfds;
-	socklen_t errlen;
-	int fd, flags, rc, err;
-
-	if (server == NULL || server[0] == '\0')
-		return 0;
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(445);
-	addr.sin_addr.s_addr = inet_addr(server);
-	/* Non-numeric host: let libsmb2 resolve it, do not block on a probe. */
-	if (addr.sin_addr.s_addr == INADDR_NONE)
-		return 1;
-
-	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0)
-		return 1; /* socket unavailable: don't block connect on this account */
-
-	flags = fcntl(fd, F_GETFL, 0);
-	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-	rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-	if (rc < 0) {
-		FD_ZERO(&rfds);
-		FD_ZERO(&wfds);
-		FD_SET(fd, &rfds);
-		FD_SET(fd, &wfds);
-		tv.tv_sec = SMB2_PROBE_TIMEOUT_MS / 1000;
-		tv.tv_usec = (SMB2_PROBE_TIMEOUT_MS % 1000) * 1000;
-		rc = select(fd + 1, &rfds, &wfds, NULL, &tv);
-		if (rc <= 0) { /* timeout or select error */
-			close(fd);
-			return 0;
-		}
-	}
-
-	/* Distinguish a real connection from a deferred connect error. */
-	err = 0;
-	errlen = sizeof(err);
-	getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
-	close(fd);
-	return (err == 0);
-}
 
 void smb2_request_reload(void)
 {
@@ -155,11 +65,16 @@ int smb2_take_reload_request(void)
 	return pending;
 }
 
+/* Shared NETFS network-init guard (also referenced by nfs.c). */
+int netfs_net_inited = 0;
+
+#define discard_const(ptr) ((void *)((intptr_t)(ptr)))
+
 static struct smb2_share *smb2_find_share(const char *name);
 static void find_share(const char *path, char **name, char **p,
                        struct smb2_share **share);
 
-/* ---- link-state wait (bounded, never hangs forever) ---------------------- */
+/* ---- link-state wait (unchanged behaviour: bounded, never hangs the GUI) -- */
 static void EthStatusCheckCb(s32 alarm_id, u16 time, void *common)
 {
 	iWakeupThread(*(int *)common);
@@ -173,7 +88,7 @@ static int WaitValidNetState(int (*checkingFunction)(void))
 	for (retry_cycles = 0; checkingFunction() == 0; retry_cycles++) {
 		SetAlarm(1000 * 16, &EthStatusCheckCb, &ThreadID);
 		SleepThread();
-		if (retry_cycles >= 10)
+		if (retry_cycles >= 5)
 			return -1;
 	}
 	return 0;
@@ -189,39 +104,270 @@ static int ethWaitValidNetIFLinkState(void)
 	return WaitValidNetState(&ethGetNetIFLinkStatus);
 }
 
-/* ---- share list ---------------------------------------------------------- */
-static void set_time(sceMcStDateTime *ps2time, u64 smb2time)
-{
-	struct tm *tm;
-	time_t t = smb2time & 0xffffffff;
+/* ---- SMB1 (smbman) session state ---------------------------------------- */
+/* smbman is a single-share device: it holds one LOGON session and one open
+ * tree (share) at a time. We keep the configured shares in the same linked
+ * list the browser already understands, and switch the active tree whenever
+ * a path addresses a different share/server. */
+static struct smb2_share *smb1_active_share = NULL;
+static char smb1_active_server[64] = "";
 
-	tm = localtime(&t);
-	if (tm == NULL)
-		return;
-	ps2time->Sec   = tm->tm_sec;
-	ps2time->Min   = tm->tm_min;
-	ps2time->Hour  = tm->tm_hour;
-	ps2time->Day   = tm->tm_mday + 1;
-	ps2time->Month = tm->tm_mon + 1;
-	ps2time->Year  = tm->tm_year + 1900;
+static void smb1_reset_session(void)
+{
+	smb1_active_share = NULL;
+	smb1_active_server[0] = '\0';
 }
 
-static void free_smb2_share(struct smb2_share *smb2_share)
+/* Build the NTLM hashes when a password is configured; matches OPL exactly. */
+static int smb1_build_logon(struct smb2_share *s, smbLogOn_in_t *logon,
+                            smbOpenShare_in_t *openshare)
 {
-	if (smb2_share == NULL)
-		return;
-	if (smb2_share->smb2) {
-		smb2_disconnect_share(smb2_share->smb2);
-		smb2_destroy_context(smb2_share->smb2);
+	/* fix14: smbman rejects an empty User with a stalled NTLM session setup
+	 * on many Samba / router shares. Open PS2 Loader (which connects fine
+	 * here) and wLaunchELF's own SMB_test.c both substitute GUEST whenever
+	 * the configured username is empty. This is a connection-layer fallback
+	 * only — the saved SMB.CNF and the settings UI still show it empty, so
+	 * there is no forced "GUEST" default in the config. */
+	const char *user = (s->user && s->user[0]) ? s->user : "GUEST";
+
+	memset(logon, 0, sizeof(*logon));
+	memset(openshare, 0, sizeof(*openshare));
+
+	snprintf(logon->serverIP, sizeof(logon->serverIP), "%s", s->server);
+	logon->serverPort = s->port;
+	snprintf(logon->User, sizeof(logon->User), "%s", user);
+
+	if (s->password && s->password[0]) {
+		smbGetPasswordHashes_in_t passwd;
+		smbGetPasswordHashes_out_t hashes;
+
+		memset(&passwd, 0, sizeof(passwd));
+		memset(&hashes, 0, sizeof(hashes));
+		strncpy(passwd.password, s->password, sizeof(passwd.password) - 1);
+		if (fileXioDevctl(SMB_DEV, SMB_DEVCTL_GETPASSWORDHASHES,
+		                  &passwd, sizeof(passwd), &hashes, sizeof(hashes)) == 0) {
+			memcpy(logon->Password, &hashes, sizeof(hashes));
+			logon->PasswordType = HASHED_PASSWORD;
+			memcpy(openshare->Password, &hashes, sizeof(hashes));
+			openshare->PasswordType = HASHED_PASSWORD;
+		} else {
+			strncpy(logon->Password, s->password, sizeof(logon->Password) - 1);
+			logon->PasswordType = PLAINTEXT_PASSWORD;
+			strncpy(openshare->Password, s->password, sizeof(openshare->Password) - 1);
+			openshare->PasswordType = PLAINTEXT_PASSWORD;
+		}
+	} else {
+		/* No password configured: anonymous / guest share. */
+		logon->PasswordType = NO_PASSWORD;
+		openshare->PasswordType = NO_PASSWORD;
 	}
-	free(smb2_share->name);
-	free(discard_const(smb2_share->user));
-	free(discard_const(smb2_share->password));
-	free(smb2_share->url);
-	free(smb2_share);
+
+	snprintf(openshare->ShareName, sizeof(openshare->ShareName), "%s", s->sharename);
+	return 0;
 }
 
-/* Parse one SMB.CNF into mounted libsmb2 shares. */
+/* fix16: quick TCP reachability probe before the SMB LOGON.
+ *
+ * smbman's fileXioDevctl(SMB_DEVCTL_LOGON) has no timeout: when the host is
+ * down / the port is closed / the address is wrong it can block the IOP fileXio
+ * RPC for minutes. That single stuck RPC wedges the shared SIF channel, so the
+ * browser's re-listing AND padRead() both stall — the UI shows the watchdog
+ * error but no button works. Probing the TCP port first with a bounded,
+ * non-blocking connect lets us fail fast in that case and never enter the
+ * blocking LOGON at all, so the interface stays responsive.
+ *
+ * Returns 1 = reachable (or a non-numeric host we cannot probe here),
+ *         0 = definitively unreachable within the timeout. */
+#define SMB1_PROBE_TIMEOUT_MS 2500
+static int smb1_server_reachable(const char *server, int port)
+{
+	struct sockaddr_in addr;
+	struct timeval tv;
+	fd_set wfds;
+	socklen_t errlen;
+	int fd, flags, rc, err;
+
+	if (server == NULL || server[0] == '\0')
+		return 0;
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons((unsigned short)((port > 0 && port < 65536) ? port : 445));
+	addr.sin_addr.s_addr = inet_addr(server);
+	/* Hostname (not a dotted quad): let smbman resolve it, do not probe. */
+	if (addr.sin_addr.s_addr == INADDR_NONE)
+		return 1;
+
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0)
+		return 1; /* socket unavailable: don't block LOGON on this account */
+
+	flags = fcntl(fd, F_GETFL, 0);
+	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+	if (rc < 0) {
+		fd_set rfds;
+		FD_ZERO(&rfds);
+		FD_ZERO(&wfds);
+		FD_SET(fd, &rfds);
+		FD_SET(fd, &wfds);
+		tv.tv_sec = SMB1_PROBE_TIMEOUT_MS / 1000;
+		tv.tv_usec = (SMB1_PROBE_TIMEOUT_MS % 1000) * 1000;
+		rc = select(fd + 1, &rfds, &wfds, NULL, &tv);
+		if (rc <= 0) { /* timeout or select error */
+			close(fd);
+			return 0;
+		}
+	}
+
+	/* Distinguish a real connection from a deferred connect error. */
+	err = 0;
+	errlen = sizeof(err);
+	getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+	close(fd);
+	return (err == 0);
+}
+
+/* LOGON to a server if it is not the one already logged on. */
+static int smb1_logon(struct smb2_share *s)
+{
+	smbLogOn_in_t logon;
+	smbOpenShare_in_t openshare;
+	int ret;
+
+	if (strcmp(smb1_active_server, s->server) == 0)
+		return 0; /* already logged on to this server */
+
+	/* fix16: never enter the unbounded LOGON devctl when the TCP port is
+	 * unreachable — that is what wedged the SIF channel and froze input. */
+	if (!smb1_server_reachable(s->server, s->port)) {
+		DPRINTF("smb1: %s:%d unreachable (TCP probe), skipping LOGON\n",
+		        s->server, s->port);
+		smb1_reset_session();
+		smb2_last_error = SMB2_ERR_CONNECT;
+		return -1;
+	}
+
+	smb1_build_logon(s, &logon, &openshare);
+	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGON, &logon, sizeof(logon), NULL, 0);
+	if (ret < 0) {
+		DPRINTF("smb1: LOGON to %s failed: %d\n", s->server, ret);
+		smb1_reset_session();
+		smb2_last_error = SMB2_ERR_CONNECT;
+		return -1;
+	}
+	snprintf(smb1_active_server, sizeof(smb1_active_server), "%s", s->server);
+	smb1_active_share = NULL; /* tree must be reopened on the new session */
+	return 0;
+}
+
+/* OPENSHARE so that "smb:" points at this share. */
+static int smb1_open_share(struct smb2_share *s)
+{
+	smbLogOn_in_t logon;
+	smbOpenShare_in_t openshare;
+	int ret;
+
+	if (smb1_logon(s) < 0)
+		return -1;
+	if (smb1_active_share == s)
+		return 0;
+
+	smb1_build_logon(s, &logon, &openshare);
+	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_OPENSHARE, &openshare, sizeof(openshare), NULL, 0);
+	if (ret < 0) {
+		DPRINTF("smb1: OPENSHARE %s failed: %d\n", s->sharename, ret);
+		smb2_last_error = SMB2_ERR_CONNECT;
+		return -1;
+	}
+	smb1_active_share = s;
+	return 0;
+}
+
+/* Resolve a "SMB:<name>/<rest>" UI path into the active share + a plain
+ * "smb:/<rest>" device path. Kept separate so all file ops share one path. */
+static int smb1_resolve(const char *path, char *devpath, size_t devpath_size)
+{
+	struct smb2_share *share = NULL;
+	char *name = NULL, *p = NULL;
+
+	find_share(path, &name, &p, &share);
+	if (share == NULL) {
+		free(name);
+		return -1;
+	}
+	free(name);
+
+	if (smb1_open_share(share) < 0)
+		return -1;
+
+	snprintf(devpath, devpath_size, "%s%s%s", SMB_DEV,
+	         (p && *p) ? "/" : "", (p && *p) ? p : "");
+	return 0;
+}
+
+/* ---- CNF parsing --------------------------------------------------------- */
+/* Parse "smb://host[:port]/share" into its parts. Tolerates a trailing slash
+ * and a share-less URL (treated as no share -> browser shows the reason). */
+static int smb1_parse_url(const char *url, char *server, size_t server_sz,
+                          int *port, char *sharename, size_t share_sz)
+{
+	const char *host = url;
+	const char *slash;
+	char *colon;
+	char hostbuf[128];
+
+	server[0] = '\0';
+	sharename[0] = '\0';
+	*port = 445;
+
+	if (url == NULL || url[0] == '\0')
+		return -1;
+	if (!strncmp(url, "smb://", 6))
+		host = url + 6;
+	else if (!strncmp(url, "\\\\", 2))
+		host = url + 2;
+
+	slash = strchr(host, '/');
+	if (slash != NULL) {
+		size_t hlen = (size_t)(slash - host);
+		if (hlen >= sizeof(hostbuf))
+			hlen = sizeof(hostbuf) - 1;
+		memcpy(hostbuf, host, hlen);
+		hostbuf[hlen] = '\0';
+		snprintf(sharename, share_sz, "%s", slash + 1);
+		/* strip trailing slashes from the share name */
+		while (sharename[0] && sharename[strlen(sharename) - 1] == '/')
+			sharename[strlen(sharename) - 1] = '\0';
+	} else {
+		snprintf(hostbuf, sizeof(hostbuf), "%s", host);
+	}
+
+	colon = strrchr(hostbuf, ':');
+	if (colon != NULL) {
+		int p = atoi(colon + 1);
+		*colon = '\0';
+		if (p > 0 && p < 65536)
+			*port = p;
+	}
+	snprintf(server, server_sz, "%s", hostbuf);
+	return (server[0] && sharename[0]) ? 0 : -1;
+}
+
+static void free_smb2_share(struct smb2_share *s)
+{
+	if (s == NULL)
+		return;
+	free(s->name);
+	free(discard_const(s->user));
+	free(discard_const(s->password));
+	free(s->url);
+	if (s == smb1_active_share)
+		smb1_reset_session();
+	free(s);
+}
+
 static int loadSMB2CNF(char *path)
 {
 	char *RAM_p;
@@ -234,8 +380,9 @@ static int loadSMB2CNF(char *path)
 	CNF_p = RAM_p;
 	while (get_CNF_string(&CNF_p, &name, &value)) {
 		if (smb2_share == NULL) {
-			smb2_share = malloc(sizeof(struct smb2_share));
-			memset(smb2_share, 0, sizeof(struct smb2_share));
+			smb2_share = calloc(1, sizeof(struct smb2_share));
+			if (smb2_share == NULL)
+				break;
 		}
 		if (!strcmp(name, "NAME")) {
 			free(smb2_share->name);
@@ -247,18 +394,6 @@ static int loadSMB2CNF(char *path)
 			free(discard_const(smb2_share->password));
 			smb2_share->password = strdup(value);
 		} else if (!strcmp(name, "URL")) {
-			struct smb2_context *smb2;
-			struct smb2_url *url;
-			/* fix20: OPL / SMB2FM / wLE's own SMB_test.c all substitute
-			 * GUEST for an EMPTY username — libsmb2 stalls NTLM session
-			 * setup on many Samba/router shares with an empty user, which
-			 * is why identical settings connect in OPL but fail here.
-			 * Connection-layer fallback ONLY: the settings UI and SMB.CNF
-			 * keep the field empty (no forced GUEST default). */
-			const char *connect_user =
-			    (smb2_share->user && smb2_share->user[0])
-			    ? smb2_share->user : "GUEST";
-
 			if (smb2_share->name == NULL)
 				smb2_share->name = strdup("SMB");
 			if (value[0] == '\0') {
@@ -271,51 +406,23 @@ static int loadSMB2CNF(char *path)
 				continue;
 			}
 			smb2_share->url = strdup(value);
-			smb2_share->smb2 = smb2 = smb2_init_context();
-			if (smb2 == NULL) {
-				smb2_last_error = SMB2_ERR_CONNECT;
-				free_smb2_share(smb2_share);
-				smb2_share = NULL;
-				continue;
-			}
-			/* fix17: bound every command (socket connect included). */
-			smb2_set_timeout(smb2, SMB2_COMMAND_TIMEOUT_SEC);
-			smb2_set_user(smb2, connect_user);
-			smb2_set_password(smb2, smb2_share->password
-			                  ? smb2_share->password : "");
-			url = smb2_parse_url(smb2, smb2_share->url);
-			if (url == NULL) {
+			if (smb1_parse_url(value, smb2_share->server, sizeof(smb2_share->server),
+			                   &smb2_share->port, smb2_share->sharename,
+			                   sizeof(smb2_share->sharename)) < 0) {
+				DPRINTF("invalid SMB URL: %s\n", value);
 				smb2_last_error = SMB2_ERR_NO_SHARE;
 				free_smb2_share(smb2_share);
 				smb2_share = NULL;
 				continue;
 			}
-			/* fix18: skip libsmb2 connect when the TCP port is
-			 * unreachable, so a SYN-dropping host fails in ~2.5s
-			 * instead of hanging the worker / showing a frozen UI. */
-			if (!smb2_server_reachable(url->server)) {
-				DPRINTF("smb2: %s:445 unreachable (TCP probe), skip connect\n",
-				        url->server);
-				smb2_destroy_url(url);
-				smb2_last_error = SMB2_ERR_CONNECT;
+			/* LOGON + OPENSHARE (SMB1, via the smbman IOP module). */
+			if (smb1_open_share(smb2_share) < 0) {
 				free_smb2_share(smb2_share);
 				smb2_share = NULL;
 				continue;
 			}
-			if (smb2_connect_share(smb2, url->server, url->share,
-			                       connect_user) < 0) {
-				DPRINTF("failed to connect to : //%s/%s %s\n",
-				        url->server, url->share, smb2_get_error(smb2));
-				smb2_destroy_url(url);
-				smb2_last_error = SMB2_ERR_CONNECT;
-				free_smb2_share(smb2_share);
-				smb2_share = NULL;
-				continue;
-			}
-			DPRINTF("Mounted share: \\\\%s\\%s as %s\n",
-			        url->server, url->share, smb2_share->name);
-			smb2_destroy_url(url);
-
+			DPRINTF("Mounted SMB1 share \\\\%s\\%s as %s\n",
+			        smb2_share->server, smb2_share->sharename, smb2_share->name);
 			smb2_last_error = SMB2_ERR_NONE;
 			smb2_share->next = smb2_shares;
 			smb2_shares = smb2_share;
@@ -333,6 +440,12 @@ void deinit_smb2(void)
 {
 	struct smb2_share *smb2_share;
 
+	/* Close the tree and log off once, before discarding the share list. */
+	if (smb1_active_share != NULL) {
+		fileXioDevctl(SMB_DEV, SMB_DEVCTL_CLOSESHARE, NULL, 0, NULL, 0);
+		fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGOFF, NULL, 0, NULL, 0);
+		smb1_reset_session();
+	}
 	while (smb2_shares) {
 		smb2_share = smb2_shares->next;
 		free_smb2_share(smb2_shares);
@@ -340,7 +453,8 @@ void deinit_smb2(void)
 	}
 }
 
-/* A CNF file that exists wins the search. */
+/* A CNF file that exists wins the search; do not reconnect to the same dead
+ * server once per candidate path (that felt exactly like a console freeze). */
 static int smb2TryCnf(const char *path)
 {
 	char *ram = preloadCNF((char *)path);
@@ -469,7 +583,8 @@ static struct smb2_share *smb2_find_share(const char *name)
 	return NULL;
 }
 
-/* Split "SMB:<name>/<rest>" into share name and relative path. */
+/* Split "SMB:<name>/<rest>" into share name and relative path. Identical
+ * semantics to the old libsmb2 version so the rest of wLE is unaffected. */
 static void find_share(const char *path, char **name, char **p,
                        struct smb2_share **share)
 {
@@ -492,14 +607,13 @@ static void find_share(const char *path, char **name, char **p,
 
 int readSMB2(const char *path, FILEINFO *info, int max)
 {
-	int n = 0;
-	struct smb2dir *dir = NULL;
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p;
-	struct smb2dirent *ent;
+	int n = 0, dd = -1;
+	char devpath[MAX_PATH];
+	iox_dirent_t record;
 
 	/* Root of SMB: is the list of configured shares. */
 	if (path[4] == '\0' || (path[4] == '/' && path[5] == '\0')) {
+		struct smb2_share *share;
 		for (share = smb2_shares; share; share = share->next) {
 			if (strlen(share->name) >= MAX_NAME)
 				continue;
@@ -517,218 +631,165 @@ int readSMB2(const char *path, FILEINFO *info, int max)
 		return n;
 	}
 
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return 0;
-	}
 
-	dir = smb2_opendir(share->smb2, (p != NULL && *p != '\0') ? p : "/");
-	if (dir == NULL) {
-		free(name);
+	if ((dd = fileXioDopen(devpath)) < 0)
 		return 0;
-	}
-	while ((ent = smb2_readdir(share->smb2, dir))) {
-		if (!strcmp(ent->name, ".") || !strcmp(ent->name, ".."))
+	while (fileXioDread(dd, &record) > 0) {
+		if (FIO_S_ISDIR(record.stat.mode) &&
+		    (!strcmp(record.name, ".") || !strcmp(record.name, "..")))
 			continue;
-		if (ent->st.smb2_type != SMB2_TYPE_FILE &&
-		    ent->st.smb2_type != SMB2_TYPE_DIRECTORY)
+		if (strlen(record.name) >= MAX_NAME)
 			continue;
-		if (strlen(ent->name) >= MAX_NAME)
-			continue;
-		strncpy(info[n].name, ent->name, MAX_NAME);
+
+		strncpy(info[n].name, record.name, MAX_NAME - 1);
 		info[n].name[MAX_NAME - 1] = 0;
 		clear_mcTable(&info[n].stats);
-		if (ent->st.smb2_type == SMB2_TYPE_DIRECTORY) {
+		if (FIO_S_ISDIR(record.stat.mode)) {
 			info[n].stats.AttrFile = MC_ATTR_norm_folder;
-		} else {
+		} else if (FIO_S_ISREG(record.stat.mode)) {
 			info[n].stats.AttrFile = MC_ATTR_norm_file;
-			info[n].stats.FileSizeByte = ent->st.smb2_size;
-			info[n].stats.Reserve2 = 0;
+			info[n].stats.FileSizeByte = record.stat.size;
+			info[n].stats.Reserve2 = record.stat.hisize;
+		} else {
+			continue;
 		}
-		strncpy((char *)info[n].stats.EntryName, info[n].name, 32);
-		set_time(&info[n].stats._Create, ent->st.smb2_ctime);
-		set_time(&info[n].stats._Modify, ent->st.smb2_mtime);
+		snprintf((char *)info[n].stats.EntryName, 32, "%.31s", info[n].name);
+		memcpy((void *)&info[n].stats._Create, record.stat.ctime, 8);
+		memcpy((void *)&info[n].stats._Modify, record.stat.mtime, 8);
 		n++;
 		if (n >= max)
 			break;
 	}
 	size_valid = 1;
 	time_valid = 1;
-
-	free(name);
-	smb2_closedir(share->smb2, dir);
+	fileXioDclose(dd);
 	return n;
 }
 
 int SMB2mkdir(const char *path, int fileMode)
 {
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p = NULL;
-	int rc = 0;
-
+	char devpath[MAX_PATH];
 	if (path[4] == '\0')
 		return -EINVAL;
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return -EINVAL;
-	}
-	rc = smb2_mkdir(share->smb2, p);
-	free(name);
-	return rc;
+	return fileXioMkdir(devpath, fileMode);
 }
 
 int SMB2rmdir(const char *path)
 {
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p = NULL;
-	int rc = 0;
-
+	char devpath[MAX_PATH];
 	if (path[4] == '\0')
 		return -EINVAL;
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return -EINVAL;
-	}
-	if (p[strlen(p) - 1] == '/')
-		p[strlen(p) - 1] = 0;
-	rc = smb2_rmdir(share->smb2, p);
-	free(name);
-	return rc;
+	if (devpath[strlen(devpath) - 1] == '/')
+		devpath[strlen(devpath) - 1] = '\0';
+	return fileXioRmdir(devpath);
 }
 
 int SMB2unlink(const char *path)
 {
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p = NULL;
-	int rc = 0;
-
+	char devpath[MAX_PATH];
 	if (path[4] == '\0')
 		return -EINVAL;
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return -EINVAL;
-	}
-	rc = smb2_unlink(share->smb2, p);
-	free(name);
-	return rc;
+	return fileXioRemove(devpath);
 }
 
 struct SMB2FH *SMB2open(const char *path, int mode)
 {
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p = NULL;
+	char devpath[MAX_PATH];
 	struct SMB2FH *fh;
+	int fd;
 
 	if (path[4] == '\0')
 		return NULL;
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return NULL;
-	}
+	fd = fileXioOpen(devpath, mode, 0666);
+	if (fd < 0)
+		return NULL;
 	fh = malloc(sizeof(struct SMB2FH));
 	if (fh == NULL) {
-		free(name);
+		fileXioClose(fd);
 		return NULL;
 	}
-	fh->smb2 = share->smb2;
-	fh->fh = smb2_open(share->smb2, p, mode);
-	free(name);
-	if (fh->fh == NULL) {
-		free(fh);
-		return NULL;
-	}
+	fh->fd = fd;
 	return fh;
 }
 
 int SMB2close(struct SMB2FH *fh)
 {
+	int ret;
 	if (fh == NULL)
 		return -1;
-	return smb2_close(fh->smb2, fh->fh);
+	ret = fileXioClose(fh->fd);
+	free(fh);
+	return ret;
 }
 
 int SMB2read(struct SMB2FH *fh, char *buf, int size)
 {
 	if (fh == NULL)
 		return -1;
-	return smb2_read(fh->smb2, fh->fh, (uint8_t *)buf, size);
+	return fileXioRead(fh->fd, buf, size);
 }
 
 int SMB2write(struct SMB2FH *fh, char *buf, int size)
 {
 	if (fh == NULL)
 		return -1;
-	return smb2_write(fh->smb2, fh->fh, (uint8_t *)buf, size);
+	return fileXioWrite(fh->fd, buf, size);
 }
 
 int SMB2lseek(struct SMB2FH *fh, int where, int how)
 {
-	uint64_t co = 0;
-	int rc;
-
 	if (fh == NULL)
 		return -1;
-	rc = smb2_lseek(fh->smb2, fh->fh, where, how, &co);
-	if (rc < 0)
-		return -1;
-	return (int)co;
+	return (int)fileXioLseek(fh->fd, where, how);
 }
 
 int SMB2stat(const char *path, int *is_dir)
 {
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p = NULL;
-	struct smb2dir *dir = NULL;
-	struct smb2fh *fh = NULL;
-	int rc = -1;
+	char devpath[MAX_PATH];
+	iox_stat_t st;
 
 	if (path[4] == '\0' || (path[4] == '/' && path[5] == '\0')) {
 		*is_dir = 1;
 		return 0;
 	}
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return -1;
-	}
-	dir = smb2_opendir(share->smb2, (p != NULL && *p != '\0') ? p : "/");
-	if (dir != NULL) {
-		smb2_closedir(share->smb2, dir);
-		*is_dir = 1;
-		rc = 0;
-	} else {
-		fh = smb2_open(share->smb2, (p != NULL && *p != '\0') ? p : "/", 0);
-		if (fh != NULL) {
-			smb2_close(share->smb2, fh);
-			*is_dir = 0;
-			rc = 0;
-		}
-	}
-	free(name);
-	return rc;
+	if (devpath[strlen(devpath) - 1] == '/')
+		devpath[strlen(devpath) - 1] = '\0';
+	if (fileXioGetStat(devpath, &st) < 0)
+		return -1;
+	*is_dir = FIO_S_ISDIR(st.mode) ? 1 : 0;
+	return 0;
 }
 
 int SMB2rename(const char *path, const char *newpath)
 {
-	struct smb2_share *share = NULL;
-	char *name = NULL, *p = NULL;
-	int ret;
+	char devpath[MAX_PATH];
+	char newdevpath[MAX_PATH];
 
 	if (path[4] == '\0')
 		return -EINVAL;
-	find_share(path, &name, &p, &share);
-	if (share == NULL) {
-		free(name);
+	if (smb1_resolve(path, devpath, sizeof(devpath)) < 0)
 		return -ENOENT;
+	/* newpath is a full "SMB:<share>/<rest>" path in wLE. */
+	if (strncmp(newpath, "SMB:", 4) == 0) {
+		if (smb1_resolve(newpath, newdevpath, sizeof(newdevpath)) < 0)
+			return -ENOENT;
+	} else {
+		snprintf(newdevpath, sizeof(newdevpath), "%s%s%s", SMB_DEV,
+		         (newpath[0] == '/') ? "" : "/", newpath);
 	}
-	ret = smb2_rename(share->smb2, p, newpath);
-	free(name);
-	return ret;
+	return fileXioRename(devpath, newdevpath);
 }
 
 //---------------------------------------------------------------------------
