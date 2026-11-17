@@ -1089,73 +1089,47 @@ static void smbSetFailureMsg(void)
 /* Returns: 1 = connected (share list non-empty), 0 = failed/timeout. */
 static int smbConnectScreen(void)
 {
-	u64 deadline, redraw_at;
 	char msg[160];
-	int result = 0;
 
 	/* Already mounted (e.g. AUTO=1 at startup) - nothing to do. */
 	if (netfs_async_state == NETFS_ASYNC_DONE &&
 	    smb2_last_error == SMB2_ERR_NONE)
 		return 1;
 
-	/* Start a (fresh) background connect unless one is already running.
-	 * A previous attempt may have left state==DONE with an error; that must
-	 * still launch a new worker. reload=1 reuses an already-up network stack
-	 * (just re-read SMB.CNF), matching netfs_reconnect(). */
-	if (netfs_async_state != NETFS_ASYNC_CONNECTING)
-		netfs_connect_async(netfs_net_inited ? 1 : 0);
+	/* fix28: bring up SMB SYNCHRONOUSLY on the GUI thread, exactly like
+	 * UDPFS's readUDPFS()->initUDPFS()->load_udpfs() path that works on this
+	 * console. The previous design ran the connect on a priority-3 worker,
+	 * which issued SifExecModuleBuffer() (NetMan/ps2ip/smap/smbman) on a
+	 * DIFFERENT thread from the GUI. When the 15s watchdog then fired
+	 * SifIopReset() on the GUI thread, the two threads fought over the single
+	 * SIF channel and the console deadlocked. Worse, the first stage text is
+	 * only set AFTER all module loads, so a worker wedged in module loading
+	 * produced zero stage text - exactly the frozen, silent screen reported.
+	 *
+	 * Doing everything on ONE thread removes the contention entirely: no
+	 * worker, no watchdog, no second SifIopReset. The bounded TCP probe in
+	 * smb1_logon() covers an unreachable server; OPL connects to this same
+	 * server, so a reachable host reaches LOGON/OPENSHARE and returns. On any
+	 * failure the caller's UDPFS-style fallback does ONE IOP reset, on the
+	 * same thread, with nothing holding SIF. */
+	snprintf(msg, sizeof(msg), "v28 %s", LNG(SMB_Starting));
+	drawMsg(msg);
 
-	/* 15s hard ceiling, measured on the EE only. */
-	deadline = Timer() + 15000;
-	redraw_at = 0;
+	if (netfs_net_inited)
+		smb2_reload();
+	else
+		init_netfs();
 
-	while (1) {
-		/* Refresh the current stage text (pure EE drawing). */
-		if (Timer() >= redraw_at) {
-			/* fix27: the "v27" tag is a self-check marker. If the user's
-			 * screenshot shows it, this exact build is running; if not,
-			 * the uploaded/compiled ELF is stale and we stop here instead of
-			 * chasing a non-existent code bug. */
-			if (smb2_diag_stage[0])
-				snprintf(msg, sizeof(msg), "v27 %s [%s]",
-				         LNG(SMB_Starting), smb2_diag_stage);
-			else
-				snprintf(msg, sizeof(msg), "v27 %s", LNG(SMB_Starting));
-			drawMsg(msg);
-			redraw_at = Timer() + 200;
-		}
+	/* No worker exists any more. Publish the result directly so the caller
+	 * (and the SMB: gate) can use the same DONE/error convention as before. */
+	netfs_async_worker_busy = 0;
+	netfs_async_generation++;
+	netfs_async_state = NETFS_ASYNC_DONE;
 
-		/* Worker really returned (SIF free) - publish its result. */
-		if (netfs_async_state == NETFS_ASYNC_DONE &&
-		    !netfs_async_worker_busy) {
-			result = (smb2_last_error == SMB2_ERR_NONE);
-			if (!result)
-				smbSetFailureMsg();
-			break;
-		}
-
-		/* EE-side hard timeout - do NOT wait for the stuck worker. */
-		if (Timer() >= deadline) {
-			result = 0;
-			smb2_last_error = SMB2_ERR_CONNECT;
-			smbSetFailureMsg();
-			break;
-		}
-
-		/* fix26 CRITICAL: this GUI thread runs at priority 0, the connect
-		 * worker at priority 3. A bare busy-wait here NEVER yields the CPU,
-		 * so the worker is starved, init_netfs() does not run, no stage text
-		 * is ever set and the state stays CONNECTING forever -> the exact
-		 * "empty folder, no stage text, frozen" symptom. DelayThread() gives
-		 * the worker CPU while keeping this loop free of SIF RPCs (DelayThread
-		 * and Timer are both EE-local). This is the yield that the old design
-		 * got implicitly from waitPadReady()'s sleeps, which we removed.
-		 * 2ms is short enough for a responsive stage display and long enough
-		 * for the worker to make progress. */
-		DelayThread(2000);
-	}
-
-	return result;
+	if (smb2_last_error == SMB2_ERR_NONE)
+		return 1;
+	smbSetFailureMsg();
+	return 0;
 }
 #endif  /* NETFS */
 
