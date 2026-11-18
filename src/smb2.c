@@ -134,13 +134,16 @@ static void smb1_reset_session(void)
 static int smb1_build_logon(struct smb2_share *s, smbLogOn_in_t *logon,
                             smbOpenShare_in_t *openshare)
 {
-	/* fix14: smbman rejects an empty User with a stalled NTLM session setup
-	 * on many Samba / router shares. Open PS2 Loader (which connects fine
-	 * here) and wLaunchELF's own SMB_test.c both substitute GUEST whenever
-	 * the configured username is empty. This is a connection-layer fallback
-	 * only — the saved SMB.CNF and the settings UI still show it empty, so
-	 * there is no forced "GUEST" default in the config. */
-	const char *user = (s->user && s->user[0]) ? s->user : "GUEST";
+	/* fix37: pass the username EXACTLY as configured, including EMPTY.
+	 * Verified against Open PS2 Loader ethsupport.c: with no password it does
+	 * strncpy(logon.User, gPCUserName, ...) where gPCUserName is the raw
+	 * (possibly empty) field, and PasswordType=NO_PASSWORD. OPL does NOT
+	 * substitute GUEST. The user's OPL (username/password both <未配置>,
+	 * address format IP) connects to 192.168.1.1/ps2 fine with an empty user.
+	 * fix14's forced "GUEST" made wLE log in as a DIFFERENT account and is
+	 * removed. This is a connection-layer fix only - SMB.CNF / UI still store
+	 * the user exactly as typed. */
+	const char *user = (s->user != NULL) ? s->user : "";
 
 	memset(logon, 0, sizeof(*logon));
 	memset(openshare, 0, sizeof(*openshare));
@@ -255,7 +258,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * unreachable — that is what wedged the SIF channel and froze input. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v36:TCP探测 %s:%d", s->server, s->port);
+		snprintf(diagstep, sizeof(diagstep), "v37:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
 	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
@@ -273,14 +276,17 @@ static int smb1_logon(struct smb2_share *s)
 	}
 
 	smb1_build_logon(s, &logon, &openshare);
+	/* fix37: show the EXACT user string we send (empty -> <空>) so a screenshot
+	 * proves whether we logged on as empty (like OPL) or as GUEST. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v36:LOGON %s/%s", s->server, logon.User);
+		snprintf(diagstep, sizeof(diagstep), "v37:LOGON %s/%s", s->server,
+		         logon.User[0] ? logon.User : "<空>");
 		smbDiagPaint(diagstep);
 	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGON, &logon, sizeof(logon), NULL, 0);
 	if (ret < 0) {
-		DPRINTF("smb1: LOGON to %s failed: %d\n", s->server, ret);
+		DPRINTF("smb1: LOGON to %s (user='%s') failed: %d\n", s->server, logon.User, ret);
 		snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "LOGON失败=%d", ret);
 		smb1_reset_session();
 		smb2_last_error = SMB2_ERR_CONNECT;
@@ -306,7 +312,7 @@ static int smb1_open_share(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v36:打开共享 %s", s->sharename);
+		snprintf(diagstep, sizeof(diagstep), "v37:打开共享 %s", s->sharename);
 		smbDiagPaint(diagstep);
 	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_OPENSHARE, &openshare, sizeof(openshare), NULL, 0);
@@ -622,14 +628,14 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * hint; real reachability is decided by the bounded TCP probe in
 	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
 	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
-	smbDiagPaint("v36:连接服务器");
+	smbDiagPaint("v37:连接服务器");
 	DPRINTF("Waiting for connection...\n");
 	if (ethWaitValidNetIFLinkState() != 0) {
 		DPRINTF("NetMan link ioctl reports DOWN (OPL smap has no NetMan NetIF); continuing to TCP probe.\n");
 	}
 	DPRINTF("Network Initialized\n");
 
-	smbDiagPaint("v36:读取SMB.CNF");
+	smbDiagPaint("v37:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
 	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 	return rc;
