@@ -1112,7 +1112,7 @@ static int smbConnectScreen(void)
 	 * server, so a reachable host reaches LOGON/OPENSHARE and returns. On any
 	 * failure the caller's UDPFS-style fallback does ONE IOP reset, on the
 	 * same thread, with nothing holding SIF. */
-	snprintf(msg, sizeof(msg), "v30 %s (diag)", LNG(SMB_Starting));
+	snprintf(msg, sizeof(msg), "v33 %s (diag)", LNG(SMB_Starting));
 	drawMsg(msg);
 
 	if (netfs_net_inited)
@@ -1725,8 +1725,16 @@ int getFilePath(char *out, int cnfmode)
 					         smb2_status_msg[0] ? smb2_status_msg
 					                            : LNG(SMB_Not_Connected));
 					browser_pushed = FALSE;
-					netfs_clear_stack_flags();
-					rebootIopAndReloadCoreStackSilent();
+					/* fix33: do NOT reset the IOP here. A failed TCP probe
+					 * (the only failure path left after fix32) never issues a
+					 * LOGON devctl, so the SIF channel is clean and the device
+					 * list stays responsive — the user confirmed the 1st failure
+					 * does NOT freeze. A full IOP reset here unloads NETMAN/
+					 * PS2IP/SMAP and clears netfs_net_inited, so the 2nd visit
+					 * re-runs NetManInit()/ps2ipInit() on the EE, which deadlocks
+					 * at "初始化TCP/IP框架" (the reported 2nd-entry freeze).
+					 * Keep the stack; smbConnectScreen() will take the safe
+					 * smb2_reload() path on the next visit. */
 					path[0] = '\0';
 					strcpy(cursorEntry, "SMB:");
 					browser_repos = TRUE;
@@ -1778,10 +1786,11 @@ int getFilePath(char *out, int cnfmode)
 				browser_pushed = FALSE;
 				path[0] = '\0';
 				strcpy(cursorEntry, "SMB:");
-				/* Kill the stuck IOP-side LOGON and reload core drivers,
-				 * exactly like the UDPFS path a few lines above. */
-				netfs_clear_stack_flags();
-				rebootIopAndReloadCoreStackSilent();
+				/* fix33: same as the gate above — keep the NETFS stack up.
+				 * A full IOP reset here clears netfs_net_inited and forces the
+				 * next visit to re-run NetManInit()/ps2ipInit(), which deadlocks
+				 * on the EE ("初始化TCP/IP框架"). The device list is responsive
+				 * without the reset; let the next visit use smb2_reload(). */
 				browser_repos = TRUE;
 				browser_nfiles = setFileList(path, ext, files, cnfmode);
 			}

@@ -599,13 +599,19 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * directly. It is a no-op once netfs_net_inited is set. */
 	netfsInitTcpip();
 
-	smbDiagPaint("29:等待网线链路");
+	/* fix32: The OPL/POPStarter smap driver registers its NetIF directly
+	 * with ps2ip and never reports link state through NetMan, so
+	 * NetManIoctl(GET_LINK_STATUS) always returns DOWN for it even on a live
+	 * cable. That made "网线未连接" a FALSE alarm which aborted the connect
+	 * and pushed the GUI into the IOP-reset path -> the freeze the user saw.
+	 * OPL does not gate on this ioctl. Keep the probe only as a diagnostic
+	 * hint; real reachability is decided by the bounded TCP probe in
+	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
+	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
+	smbDiagPaint("29:连接服务器");
 	DPRINTF("Waiting for connection...\n");
 	if (ethWaitValidNetIFLinkState() != 0) {
-		DPRINTF("Error: failed to get valid link status.\n");
-		snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "网线未连接");
-		smb2_last_error = SMB2_ERR_LINK;
-		return -1;
+		DPRINTF("NetMan link ioctl reports DOWN (OPL smap has no NetMan NetIF); continuing to TCP probe.\n");
 	}
 	DPRINTF("Network Initialized\n");
 
