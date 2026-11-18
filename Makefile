@@ -190,6 +190,10 @@ ifeq ($(NETFS),1)
     # NFS/libnfs (EE lwIP) but add -lps2ips for the IOP RPC client. Both libraries
     # can coexist: -lps2ips only adds ps2ip_init/ps2ip_setconfig/getconfig here.
     EE_LIBS += -lnfs -lps2ip -lnetman -lps2ips
+    # fix39: both lwIP-derived libs define the same benign constant ip_addr_any
+    # (= IPADDR_ANY / 0.0.0.0). Let ld keep the first definition instead of
+    # failing the whole link. Only enabled for this NETFS build.
+    EE_LDFLAGS += -Wl,--allow-multiple-definition
     HAS_ETH = -ETH
 endif
 ifeq ($(UDPFS),1)
