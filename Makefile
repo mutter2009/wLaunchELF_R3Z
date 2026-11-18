@@ -182,9 +182,14 @@ ifeq ($(NETFS),1)
     # netman/ps2ip stay for NFS + the TCP reachability pre-check.
     # netfs_shim.o supplies poll()/gethostname() that libnfs' PS2 port needs
     # (previously provided by libsmb2, which the SMB1 backend no longer links).
-    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o smsutils_irx.o
+    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o smsutils_irx.o ps2ips_irx.o
     EE_CFLAGS += -DNETFS
-    EE_LIBS += -lnfs -lps2ip -lnetman
+    # fix38: smbman runs on the IOP and reaches the server through the IOP
+    # ps2ip stack. That stack is initialized/configured over RPC by ps2ips.irx
+    # (ps2ip_init/ps2ip_setconfig) - exactly how OPL connects. Keep -lps2ip for
+    # NFS/libnfs (EE lwIP) but add -lps2ips for the IOP RPC client. Both libraries
+    # can coexist: -lps2ips only adds ps2ip_init/ps2ip_setconfig/getconfig here.
+    EE_LIBS += -lnfs -lps2ip -lnetman -lps2ips
     HAS_ETH = -ETH
 endif
 ifeq ($(UDPFS),1)

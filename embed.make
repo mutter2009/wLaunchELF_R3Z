@@ -648,6 +648,17 @@ ifeq ($(ETH),1)
 $(EE_ASM_DIR)ps2ip_irx.s: $(PS2SDK)/iop/irx/ps2ip.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2ip_irx
 
+# fix38: ps2ips.irx is the IOP-side RPC server for ps2ip. OPL loads it right
+# after ps2ip.irx, then calls ps2ip_init()/ps2ip_setconfig() from the EE over
+# RPC. smbman (IOP) reaches the share through THIS stack, so without ps2ips the
+# IOP stack is never RPC-initialized/configured and TCP connect fails (-191).
+PS2IPS_SOURCE := $(PS2SDK)/iop/irx/ps2ips.irx
+ifeq ($(wildcard $(PS2IPS_SOURCE)),)
+$(error Missing $(PS2IPS_SOURCE). ps2ips.irx is required for NETFS/SMB1; update the PS2SDK/toolchain container)
+endif
+$(EE_ASM_DIR)ps2ips_irx.s: $(PS2IPS_SOURCE) | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ ps2ips_irx
+
 $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 

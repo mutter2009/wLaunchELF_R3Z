@@ -258,7 +258,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * unreachable — that is what wedged the SIF channel and froze input. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v37:TCP探测 %s:%d", s->server, s->port);
+		snprintf(diagstep, sizeof(diagstep), "v38:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
 	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
@@ -280,7 +280,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * proves whether we logged on as empty (like OPL) or as GUEST. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v37:LOGON %s/%s", s->server,
+		snprintf(diagstep, sizeof(diagstep), "v38:LOGON %s/%s", s->server,
 		         logon.User[0] ? logon.User : "<空>");
 		smbDiagPaint(diagstep);
 	}
@@ -312,7 +312,7 @@ static int smb1_open_share(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v37:打开共享 %s", s->sharename);
+		snprintf(diagstep, sizeof(diagstep), "v38:打开共享 %s", s->sharename);
 		smbDiagPaint(diagstep);
 	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_OPENSHARE, &openshare, sizeof(openshare), NULL, 0);
@@ -588,10 +588,34 @@ int netfsInitNetman(void)
 	return 0;
 }
 
-/* fix36: EE-side ps2ip configuration (IP/netmask/gw). Called AFTER smap has
- * registered its NetIF and IOP ps2ip is loaded. Idempotent. */
+/* fix38: configure the IOP ps2ip stack over RPC, the exact way OPL does.
+ *
+ * smbman runs on the IOP and opens its TCP connection with the IOP ps2ip
+ * stack. In fix36/37 we only called ps2ipInit() (the EE-side lwIP stack) and
+ * never loaded ps2ips.irx, so the IOP stack was RPC-initialized with no valid
+ * address -> smbman's connect() failed with -191. OPL instead loads ps2ips.irx
+ * after ps2ip.irx and calls ps2ip_init() + ps2ip_setconfig() over RPC; that
+ * configures the very stack smbman uses. Mirror it here.
+ *
+ * We use the symbol names that libps2ips.a actually exports (verified from
+ * PS2SDK source): ps2ip_init() and ps2ipc_ps2ip_setconfig(). t_ip_info is
+ * declared locally with the exact tcpip.h layout to avoid pulling tcpip.h
+ * into this file (it clashes with the EE ps2ip.h socket aliases). */
+extern int ps2ip_init(void);
+struct fix38_ip_info {
+	char netif_name[4];
+	struct in_addr ipaddr;
+	struct in_addr netmask;
+	struct in_addr gw;
+	u32 dhcp_enabled;
+	u32 dhcp_status;
+	u8 hw_addr[8];
+};
+extern int ps2ipc_ps2ip_setconfig(const struct fix38_ip_info *ip_info);
+
 int netfsInitTcpip(void)
 {
+	struct fix38_ip_info info;
 	struct ip4_addr IP, NM, GW;
 	int ip4[4];
 
@@ -599,6 +623,9 @@ int netfsInitTcpip(void)
 		return 0;
 
 	netfsInitNetman(); /* safe no-op if already done before smap */
+
+	/* Keep the EE lwIP stack up as before: libnfs / netfs_shim poll() and the
+	 * EE-side reachability probe depend on it. Removing it would break NFS. */
 	sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
 	IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
 	sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
@@ -606,6 +633,31 @@ int netfsInitTcpip(void)
 	sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
 	IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], ip4[3]);
 	ps2ipInit(&IP, &NM, &GW);
+
+	/* fix38: ALSO bring up + configure the IOP ps2ip stack over RPC, which is
+	 * the one smbman uses to reach the server. This is the step fix36/37 were
+	 * missing and is why smbman's connect() returned -191. */
+	if (ps2ip_init() < 0) {
+		DPRINTF("smb1: ps2ip_init() (IOP RPC) failed\n");
+		return -1;
+	}
+
+	memset(&info, 0, sizeof(info));
+	strncpy(info.netif_name, "sm0", sizeof(info.netif_name));
+	sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	info.ipaddr.s_addr = htonl((ip4[0]<<24) | (ip4[1]<<16) | (ip4[2]<<8) | ip4[3]);
+	sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	info.netmask.s_addr = htonl((ip4[0]<<24) | (ip4[1]<<16) | (ip4[2]<<8) | ip4[3]);
+	sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	info.gw.s_addr = htonl((ip4[0]<<24) | (ip4[1]<<16) | (ip4[2]<<8) | ip4[3]);
+	info.dhcp_enabled = 0;
+
+	/* Apply the static IP to the IOP stack smbman actually uses. */
+	if (ps2ipc_ps2ip_setconfig(&info) < 0) {
+		DPRINTF("smb1: ps2ipc_ps2ip_setconfig() failed\n");
+		return -1;
+	}
+
 	netfs_net_inited = 1;
 	return 0;
 }
@@ -628,14 +680,14 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * hint; real reachability is decided by the bounded TCP probe in
 	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
 	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
-	smbDiagPaint("v37:连接服务器");
+	smbDiagPaint("v38:连接服务器");
 	DPRINTF("Waiting for connection...\n");
 	if (ethWaitValidNetIFLinkState() != 0) {
 		DPRINTF("NetMan link ioctl reports DOWN (OPL smap has no NetMan NetIF); continuing to TCP probe.\n");
 	}
 	DPRINTF("Network Initialized\n");
 
-	smbDiagPaint("v37:读取SMB.CNF");
+	smbDiagPaint("v38:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
 	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 	return rc;
