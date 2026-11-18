@@ -695,11 +695,22 @@ endif
 $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ netman_irx
 
-# SMB1 backend: embed smbman.irx, the IOP module that registers the "smb:"
-# fileXio device (the exact driver Open PS2 Loader uses). Ships with PS2SDK.
+# SMB1 backend: build a diagnostic smbman IOP module from vendored PS2SDK
+# sources with mass:/SMBDEBUG.LOG probes, then embed it. It still registers
+# the same "smb:" fileXio device (the exact driver OPL uses); only extra
+# best-effort logging was added. Reverts to the stock SDK smbman.irx if the
+# vendored module directory is absent.
+LOCAL_SMBMAN_IRX := iop/smbman_dbg/smbman_dbg.irx
+SMBMAN_DEPS := $(wildcard iop/smbman_dbg/*.[ch]) iop/smbman_dbg/imports.lst iop/smbman_dbg/Makefile
+ifneq ($(wildcard iop/smbman_dbg/Makefile),)
+$(LOCAL_SMBMAN_IRX): $(SMBMAN_DEPS)
+	$(MAKE) -C iop/smbman_dbg
+SMBMAN_SOURCE := $(LOCAL_SMBMAN_IRX)
+else
 SMBMAN_SOURCE := $(PS2SDK)/iop/irx/smbman.irx
+endif
 ifeq ($(wildcard $(SMBMAN_SOURCE)),)
-$(error Missing $(SMBMAN_SOURCE). smbman.irx is required for NETFS/SMB1; update the PS2SDK/toolchain container)
+$(error Missing SMBMAN source ($(SMBMAN_SOURCE)). Need iop/smbman_dbg or SDK smbman.irx)
 endif
 $(EE_ASM_DIR)smbman_irx.s: $(SMBMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ smbman_irx

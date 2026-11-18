@@ -1,0 +1,25 @@
+/*
+# _____     ___ ____     ___ ____
+#  ____|   |    ____|   |        | |____|
+# |     ___|   |____ ___|    ____| |    \    PS2DEV Open Source Project.
+#-----------------------------------------------------------------------
+# Copyright 2001-2009, ps2dev - http://www.ps2dev.org
+# Licenced under Academic Free License version 2.0
+# Defines all IRX imports for the diagnostic smbman build.
+*/
+
+#ifndef IOP_IRX_IMPORTS_H
+#define IOP_IRX_IMPORTS_H
+
+#include <irx.h>
+
+#include <intrman.h>
+#include <ioman.h>
+#include <ps2ip.h>
+#include <sifman.h>
+#include <stdio.h>
+#include <sysclib.h>
+#include <thbase.h>
+#include <thsemap.h>
+
+#endif
