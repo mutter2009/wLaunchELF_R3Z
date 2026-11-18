@@ -258,14 +258,18 @@ static int smb1_logon(struct smb2_share *s)
 		snprintf(diagstep, sizeof(diagstep), "29:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
+	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
+	 * fix31 replaced smap with the OPL/POPStarter driver which registers its
+	 * NetIF directly with the IOP-side ps2ip ("ps2ip"+"thevent" imports only).
+	 * The EE socket therefore cannot see that NetIF and ALWAYS times out —
+	 * even though smbman (IOP ps2ip, the same stack OPL uses) can reach the
+	 * server fine. So the probe result is meaningless here: never let it veto
+	 * LOGON. Keep it only as a DPRINTF diagnostic and let the real smbman
+	 * LOGON/OPENSHARE decide reachability, exactly like OPL does. */
 	if (!smb1_server_reachable(s->server, s->port)) {
-		DPRINTF("smb1: %s:%d unreachable (TCP probe), skipping LOGON\n",
+		DPRINTF("smb1: %s:%d EE-socket probe timed out (stack mismatch with "
+		        "IOP ps2ip smap); proceeding to LOGON anyway\n",
 		        s->server, s->port);
-		snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "TCP不通 %s:%d",
-		         s->server, s->port);
-		smb1_reset_session();
-		smb2_last_error = SMB2_ERR_CONNECT;
-		return -1;
 	}
 
 	smb1_build_logon(s, &logon, &openshare);
