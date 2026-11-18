@@ -255,7 +255,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * unreachable — that is what wedged the SIF channel and froze input. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "29:TCP探测 %s:%d", s->server, s->port);
+		snprintf(diagstep, sizeof(diagstep), "v36:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
 	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
@@ -275,7 +275,7 @@ static int smb1_logon(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "29:LOGON %s/%s", s->server, logon.User);
+		snprintf(diagstep, sizeof(diagstep), "v36:LOGON %s/%s", s->server, logon.User);
 		smbDiagPaint(diagstep);
 	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGON, &logon, sizeof(logon), NULL, 0);
@@ -306,7 +306,7 @@ static int smb1_open_share(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "29:打开共享 %s", s->sharename);
+		snprintf(diagstep, sizeof(diagstep), "v36:打开共享 %s", s->sharename);
 		smbDiagPaint(diagstep);
 	}
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_OPENSHARE, &openshare, sizeof(openshare), NULL, 0);
@@ -568,12 +568,22 @@ int smb2_reload(void)
 	return smb2LoadAllCNF();
 }
 
-/* fix30: NetMan/ps2ip framework init is split out so it can run BEFORE the
- * smap.irx module is loaded. The modern ps2smap.irx embedded here registers
- * itself with ps2ip ("NetIF added to ps2ip") during its load; if ps2ipInit()
- * has not run yet, that registration waits forever and SifExecModuleBuffer()
- * never returns -> the silent freeze right after "加载SMAP". OPL avoids this
- * by initialising the EE-side framework first. Idempotent via netfs_net_inited. */
+/* fix36: OPL order — NetManInit() on the EE must run right AFTER netman.irx
+ * is loaded and BEFORE smap.irx loads (the modern smap registers its NetIF
+ * with NetMan during load). Split out so init.c can call it at that point.
+ * netman_inited is cleared by netfs_clear_stack_flags() after an IOP reset. */
+int netman_inited = 0;
+int netfsInitNetman(void)
+{
+	if (netman_inited)
+		return 0;
+	NetManInit();
+	netman_inited = 1;
+	return 0;
+}
+
+/* fix36: EE-side ps2ip configuration (IP/netmask/gw). Called AFTER smap has
+ * registered its NetIF and IOP ps2ip is loaded. Idempotent. */
 int netfsInitTcpip(void)
 {
 	struct ip4_addr IP, NM, GW;
@@ -582,7 +592,7 @@ int netfsInitTcpip(void)
 	if (netfs_net_inited)
 		return 0;
 
-	NetManInit();
+	netfsInitNetman(); /* safe no-op if already done before smap */
 	sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
 	IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
 	sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
@@ -612,14 +622,14 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * hint; real reachability is decided by the bounded TCP probe in
 	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
 	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
-	smbDiagPaint("29:连接服务器");
+	smbDiagPaint("v36:连接服务器");
 	DPRINTF("Waiting for connection...\n");
 	if (ethWaitValidNetIFLinkState() != 0) {
 		DPRINTF("NetMan link ioctl reports DOWN (OPL smap has no NetMan NetIF); continuing to TCP probe.\n");
 	}
 	DPRINTF("Network Initialized\n");
 
-	smbDiagPaint("29:读取SMB.CNF");
+	smbDiagPaint("v36:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
 	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 	return rc;

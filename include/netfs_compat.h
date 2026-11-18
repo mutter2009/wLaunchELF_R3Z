@@ -31,10 +31,19 @@ static inline void clear_mcTable(sceMcTblGetDir *mcT)
  * idempotency guard shared between smb2.c and nfs.c. */
 extern int netfs_net_inited;
 
-/* fix30: initialise the EE-side NetMan/ps2ip framework. MUST be called before
- * loading smap.irx (the modern ps2smap registers itself with ps2ip on load).
- * Defined in smb2.c; idempotent. Returns 0 (signature kept as int to match
- * the definition in smb2.c). */
+/* fix36: EE-side NetMan framework init guard (netman_inited lives in smb2.c).
+ * Cleared after an IOP reset by netfs_clear_stack_flags(). */
+extern int netman_inited;
+
+/* fix36: initialise the EE-side NetMan framework. OPL calls NetManInit()
+ * RIGHT AFTER loading netman.irx and BEFORE loading smap.irx — the modern smap
+ * registers its NetIF with NetMan on load and needs the framework already up.
+ * Defined in smb2.c; idempotent (safe to call more than once). */
+int netfsInitNetman(void);
+
+/* fix30: initialise the EE-side ps2ip framework (IP/netmask/gw). MUST be called
+ * AFTER smap.irx has registered its NetIF. Defined in smb2.c; idempotent.
+ * Returns 0 (signature kept as int to match the definition in smb2.c). */
 int netfsInitTcpip(void);
 
 /* Status line shown by the file browser while visiting SMB:. Empty when at

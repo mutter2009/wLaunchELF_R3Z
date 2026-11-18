@@ -182,7 +182,7 @@ ifeq ($(NETFS),1)
     # netman/ps2ip stay for NFS + the TCP reachability pre-check.
     # netfs_shim.o supplies poll()/gethostname() that libnfs' PS2 port needs
     # (previously provided by libsmb2, which the SMB1 backend no longer links).
-    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o
+    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o smsutils_irx.o
     EE_CFLAGS += -DNETFS
     EE_LIBS += -lnfs -lps2ip -lnetman
     HAS_ETH = -ETH

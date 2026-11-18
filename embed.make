@@ -652,16 +652,14 @@ $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 
 # ETH stack policy:
-# FIX31: use the repo's pinned ps2smap.irx (the POPStarter/OPL-lineage driver
-# that loads without waiting on the ps2ip NetIF link event). This is the ONLY
-# variant that does not wedge SifExecModuleBuffer() right after "加载SMAP" on
-# this setup. It MUST take priority over $(PS2DEV)/ps2eth/smap/ps2smap.irx,
-# which is otherwise picked first in CI and reintroduces the hang.
+# FIX36: align completely with Open PS2 Loader's verified SMB1 stack:
+#   DEV9 -> NETMAN(+NetManInit on EE) -> SMSUTILS -> SMAP -> PS2IP -> SMBMAN
+# Use the repo's pinned MODERN ps2smap.irx (OPL-lineage, md5 0294c985) and the
+# pinned smsutils.irx. Both MUST take priority over $(PS2DEV)/ps2eth versions,
+# otherwise CI silently picks different modules and breaks the stack again.
 PS2SMAP_SOURCE :=
 ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
 PS2SMAP_SOURCE := iop/__precompiled/ps2smap.irx
-else ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/ps2smap.irx),)
 PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/smap-ps2ip.irx),)
@@ -674,6 +672,11 @@ endif
 
 $(EE_ASM_DIR)ps2smap_irx.s: $(PS2SMAP_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2smap_irx
+
+# FIX36: smsutils.irx — OPL loads this between NETMAN and SMAP. It provides
+# the NetMan NETIF link-mode/status helper functions the modern smap relies on.
+$(EE_ASM_DIR)smsutils_irx.s: iop/__precompiled/smsutils.irx | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ smsutils_irx
 
 $(EE_ASM_DIR)ps2ftpd_irx.s: iop/ps2ftpd.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2ftpd_irx

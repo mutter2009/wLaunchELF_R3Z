@@ -19,6 +19,7 @@ IMPORT_BIN2C(ps2ftpd_irx);
 
 #ifdef NETFS
 IMPORT_BIN2C(netman_irx);
+IMPORT_BIN2C(smsutils_irx);
 /* SMB1 (smbman) client: registers the smb: fileXio device, same as OPL. */
 IMPORT_BIN2C(smbman_irx);
 #endif
@@ -145,6 +146,7 @@ static int vmcman_last_error = 0;
 #include <smb2.h>
 #include <nfs.h>
 static u8 have_netman = 0;
+static u8 have_smsutils = 0;
 static u8 have_smbman = 0;
 
 static void load_ps2ip(void);
@@ -333,9 +335,11 @@ int netfs_async_consume_completion(void)
 void netfs_clear_stack_flags(void)
 {
 	have_netman = 0;
+	have_smsutils = 0;
 	have_smbman = 0;
 	have_ps2ip = 0;
 	netfs_net_inited = 0;
+	netman_inited = 0;
 	/* Abandon any worker still stuck in LOGON: bump generation so it can
 	 * never publish a stale DONE after the reset, and mark it not-busy. */
 	netfs_async_generation++;
@@ -586,7 +590,7 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("29:加载DEV9");
+		smbDiagStep("v36:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 		DPRINTF(" [DEV9]: ID=%d, ret=%d\n", ID, rcode);
@@ -669,7 +673,7 @@ static void load_ps2ip(void)
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("29:切换ETH栈");
+	smbDiagStep("v36:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -680,55 +684,60 @@ static void load_ps2ip(void)
 	}
 
 #ifdef NETFS
-	/* NETMAN framework must be up before SMAP/PS2IP register with it. */
+	/* fix36: OPL order — load netman.irx, then call NetManInit() on the EE
+	 * BEFORE loading smap.irx. The modern smap registers its NetIF with
+	 * NetMan while loading; if the framework is not up yet the registration
+	 * waits forever and SifExecModuleBuffer() never returns (the old
+	 * "加载SMAP" freeze). */
 	if (!have_netman) {
 #ifdef NETFS
-		smbDiagStep("29:加载NETMAN");
+		smbDiagStep("v36:加载NETMAN");
 #endif
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
 		have_netman = (ID >= 0 && ret >= 0);
 		if (!have_netman)
 			return;
+		netfsInitNetman();
 	}
-#endif
 
+	/* fix36: SMSUTILS is loaded by OPL between NETMAN and SMAP. It exports
+	 * the NetMan NETIF link-mode/status helpers the modern smap needs. */
+	if (!have_smsutils) {
+		smbDiagStep("v36:加载SMSUTILS");
+		ID = SifExecModuleBuffer(smsutils_irx, size_smsutils_irx, 0, NULL, &ret);
+		DPRINTF(" [SMSUTILS]: ID=%d, ret=%d\n", ID, ret);
+		have_smsutils = (ID >= 0 && ret >= 0);
+	}
+
+	/* fix36: load the MODERN smap (OPL-lineage) with no args. OPL passes
+	 * (0, NULL); its IP comes from ps2ip_setconfig later, not module args. */
+	if (!have_ps2smap) {
+		smbDiagStep("v36:加载SMAP");
+		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx, 0, NULL, &ret);
+		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
+		have_ps2smap = (ID >= 0 && ret >= 0);
+		if (!have_ps2smap)
+			return;
+	}
+
+	/* fix36: load IOP ps2ip AFTER smap has registered its NetIF. */
 	if (!have_ps2ip) {
-#ifdef NETFS
-		smbDiagStep("29:加载PS2IP");
-#endif
+		smbDiagStep("v36:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2ip = (ID >= 0 && ret >= 0);
-		if (!have_ps2ip)
-			return;
 	}
-#ifdef NETFS
-	/* fix34: restore the OPL/PS2SDK load order — load smap.irx FIRST, then
-	 * initialise the EE-side NetMan/ps2ip framework. fix30 had moved
-	 * netfsInitTcpip() ahead of smap to work around the OLD ps2smap that
-	 * blocked in "NetIF added to ps2ip" while ps2ipInit() was not yet run.
-	 * fix31 replaced that driver with the OPL/POPStarter one, which registers
-	 * its NetIF directly with ps2ip and loads without waiting — so the old
-	 * workaround is no longer needed and is now HARMFUL: ps2ipInit() runs
-	 * before the NetIF exists, the EE socket gets no bound interface, and the
-	 * bounded TCP probe times out ("TCP不通 192.168.1.1:445").
-	 * Doing it after smap lets ps2ip bind the IP to the registered NetIF. */
-	if (!have_ps2smap) {
-#ifdef NETFS
-		smbDiagStep("29:加载SMAP");
-#endif
-		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx,
-		                    if_conf_len, &if_conf[0], &ret);
-		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
-		have_ps2smap = (ID >= 0 && ret >= 0);
-	}
-	smbDiagStep("29:初始化TCP/IP框架");
+
+	/* fix36: apply the static IP the OPL way (ps2ip_getconfig/setconfig),
+	 * after the NetIF and ps2ip are both up. */
+	smbDiagStep("v36:配置IP");
 	netfsInitTcpip();
 #endif
 }
 #endif
-//------------------------------
+
+//---------------------------------------------------------------------------
 //endfunc load_ps2ip
 //---------------------------------------------------------------------------
 
@@ -743,9 +752,9 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("29:加载SMBMAN前准备");
+	smbDiagStep("v36:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("29:加载SMBMAN");
+	smbDiagStep("v36:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
 	have_smbman = (ID >= 0 && ret >= 0);
