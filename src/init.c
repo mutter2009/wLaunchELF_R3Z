@@ -704,17 +704,16 @@ static void load_ps2ip(void)
 			return;
 	}
 #ifdef NETFS
-	/* fix30 CRITICAL (align with OPL/PS2SDK order): initialise the EE-side
-	 * NetMan/ps2ip framework BEFORE loading smap.irx. The embedded modern
-	 * ps2smap.irx registers its NetIF with ps2ip while loading ("NetIF added
-	 * to ps2ip"); if ps2ipInit() has not run yet that registration waits on
-	 * an event that never comes and SifExecModuleBuffer(smap) never returns
-	 * -> the exact silent freeze seen right after "29:加载SMAP". Old
-	 * wLaunchELF worked because it embedded an older smap with no netman
-	 * dependency. Idempotent, so init_smb2()'s later call is a no-op. */
-	smbDiagStep("29:初始化TCP/IP框架");
-	netfsInitTcpip();
-#endif
+	/* fix34: restore the OPL/PS2SDK load order — load smap.irx FIRST, then
+	 * initialise the EE-side NetMan/ps2ip framework. fix30 had moved
+	 * netfsInitTcpip() ahead of smap to work around the OLD ps2smap that
+	 * blocked in "NetIF added to ps2ip" while ps2ipInit() was not yet run.
+	 * fix31 replaced that driver with the OPL/POPStarter one, which registers
+	 * its NetIF directly with ps2ip and loads without waiting — so the old
+	 * workaround is no longer needed and is now HARMFUL: ps2ipInit() runs
+	 * before the NetIF exists, the EE socket gets no bound interface, and the
+	 * bounded TCP probe times out ("TCP不通 192.168.1.1:445").
+	 * Doing it after smap lets ps2ip bind the IP to the registered NetIF. */
 	if (!have_ps2smap) {
 #ifdef NETFS
 		smbDiagStep("29:加载SMAP");
@@ -724,6 +723,9 @@ static void load_ps2ip(void)
 		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2smap = (ID >= 0 && ret >= 0);
 	}
+	smbDiagStep("29:初始化TCP/IP框架");
+	netfsInitTcpip();
+#endif
 }
 #endif
 //------------------------------
