@@ -703,14 +703,17 @@ $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 LOCAL_SMBMAN_IRX := iop/smbman_dbg/smbman_dbg.irx
 SMBMAN_DEPS := $(wildcard iop/smbman_dbg/*.[ch]) iop/smbman_dbg/imports.lst iop/smbman_dbg/Makefile
 ifneq ($(wildcard iop/smbman_dbg/Makefile),)
+# Vendored diagnostic module present. The .irx is PRODUCED by the rule below,
+# so it must NOT be wildcard-checked at parse time (it does not exist yet).
 $(LOCAL_SMBMAN_IRX): $(SMBMAN_DEPS)
 	$(MAKE) -C iop/smbman_dbg
 SMBMAN_SOURCE := $(LOCAL_SMBMAN_IRX)
 else
 SMBMAN_SOURCE := $(PS2SDK)/iop/irx/smbman.irx
-endif
+# Only the SDK prebuilt is an external input, so only that needs an existence check.
 ifeq ($(wildcard $(SMBMAN_SOURCE)),)
-$(error Missing SMBMAN source ($(SMBMAN_SOURCE)). Need iop/smbman_dbg or SDK smbman.irx)
+$(error Missing $(SMBMAN_SOURCE). Need iop/smbman_dbg or SDK smbman.irx)
+endif
 endif
 $(EE_ASM_DIR)smbman_irx.s: $(SMBMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ smbman_irx
