@@ -652,18 +652,16 @@ $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 
 # ETH stack policy:
-# FIX46: restore the fix35 driver selection that was the ONLY build where the
-# "smb:" device registered successfully (LOGON reached the real -4097 layer).
-# fix36 forced the repo's OPL-lineage ps2smap.irx to take priority; that driver
-# blocks forever registering its NetIF unless NetManInit() ran first, so when
-# fix45 restored fix35's load order (which has no NetManInit/SMSUTILS) the
-# console froze at "加载SMAP". Prefer the historical ps2eth driver again, which
-# accepts the if_conf IP args without needing the OPL NetMan framework.
+# FIX31: use the repo's pinned ps2smap.irx (the POPStarter/OPL-lineage driver
+# that loads without waiting on the ps2ip NetIF link event). This is the ONLY
+# variant that does not wedge SifExecModuleBuffer() right after "加载SMAP" on
+# this setup. It MUST take priority over $(PS2DEV)/ps2eth/smap/ps2smap.irx,
+# which is otherwise picked first in CI and reintroduces the hang.
 PS2SMAP_SOURCE :=
-ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
-else ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
+ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
 PS2SMAP_SOURCE := iop/__precompiled/ps2smap.irx
+else ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
+PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/ps2smap.irx),)
 PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/smap-ps2ip.irx),)
@@ -676,11 +674,6 @@ endif
 
 $(EE_ASM_DIR)ps2smap_irx.s: $(PS2SMAP_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2smap_irx
-
-# FIX36: smsutils.irx — OPL loads this between NETMAN and SMAP. It provides
-# the NetMan NETIF link-mode/status helper functions the modern smap relies on.
-$(EE_ASM_DIR)smsutils_irx.s: iop/__precompiled/smsutils.irx | $(EE_ASM_DIR)
-	$(BIN2S) $< $@ smsutils_irx
 
 $(EE_ASM_DIR)ps2ftpd_irx.s: iop/ps2ftpd.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2ftpd_irx
