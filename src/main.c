@@ -34,9 +34,13 @@ u64 CurrTime;
 char if_conf[IPCONF_MAX_LEN];
 int if_conf_len;
 
-char ip[16] = "192.168.0.10";
+/* fix45: default to the 192.168.1.x network used by the user's OPL setup:
+ * PS2 host = 192.168.1.10, gateway = 192.168.1.1. config_network.c derives
+ * the default SMB server from the gateway, so SMB also defaults to 192.168.1.1
+ * (OPL-compatible). */
+char ip[16] = "192.168.1.10";
 char netmask[16] = "255.255.255.0";
-char gw[16] = "192.168.0.1";
+char gw[16] = "192.168.1.1";
 
 char netConfig[IPCONF_MAX_LEN + 64];  //Adjust size as needed
 
