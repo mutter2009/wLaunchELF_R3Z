@@ -595,7 +595,7 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("v45:加载DEV9");
+		smbDiagStep("v46:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 #ifdef NETFS
@@ -684,7 +684,7 @@ static void load_ps2ip(void)
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("v45:切换ETH栈");
+	smbDiagStep("v46:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -704,7 +704,7 @@ static void load_ps2ip(void)
 	 * *ret on success. fix44 trusted it and wrongly declared success.
 	 * Order: NETMAN -> PS2IP -> SMAP(with IP args) -> netfsInitTcpip. */
 	if (!have_netman) {
-		smbDiagStep("v45:加载NETMAN");
+		smbDiagStep("v46:加载NETMAN");
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		smbDiagLog("MOD NETMAN: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
@@ -716,7 +716,7 @@ static void load_ps2ip(void)
 	/* fix45: load IOP ps2ip BEFORE smap — the smap registers its NetIF with
 	 * ps2ip on load, so ps2ip must already be resident. */
 	if (!have_ps2ip) {
-		smbDiagStep("v45:加载PS2IP");
+		smbDiagStep("v46:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		smbDiagLog("MOD PS2IP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
@@ -728,7 +728,7 @@ static void load_ps2ip(void)
 	/* fix45: pass the IP/netmask/gw config block to smap, exactly like fix35
 	 * (which worked). fix36 dropped these args; the pinned smap needs them. */
 	if (!have_ps2smap) {
-		smbDiagStep("v45:加载SMAP");
+		smbDiagStep("v46:加载SMAP");
 		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx,
 		                         if_conf_len, &if_conf[0], &ret);
 		smbDiagLog("MOD SMAP: ID=%d ret=%d conf=%d\n", ID, ret, if_conf_len);
@@ -738,7 +738,7 @@ static void load_ps2ip(void)
 
 	/* fix45: SMSUTILS is intentionally NOT loaded (as in fix35). It was
 	 * introduced in fix36 together with the regression. */
-	smbDiagStep("v45:配置IP");
+	smbDiagStep("v46:配置IP");
 	netfsInitTcpip();
 #endif
 }
@@ -759,9 +759,9 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("v45:加载SMBMAN前准备");
+	smbDiagStep("v46:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("v45:加载SMBMAN");
+	smbDiagStep("v46:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	/* fix43: THE critical line. If smbman fails to load (ID<0 or ret<0) the
 	 * smb: device never registers and every LOGON devctl returns a device-layer

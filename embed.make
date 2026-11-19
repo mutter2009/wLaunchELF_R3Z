@@ -652,13 +652,17 @@ $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 
 # ETH stack policy:
-# FIX36: align completely with Open PS2 Loader's verified SMB1 stack:
-#   DEV9 -> NETMAN(+NetManInit on EE) -> SMSUTILS -> SMAP -> PS2IP -> SMBMAN
-# Use the repo's pinned MODERN ps2smap.irx (OPL-lineage, md5 0294c985) and the
-# pinned smsutils.irx. Both MUST take priority over $(PS2DEV)/ps2eth versions,
-# otherwise CI silently picks different modules and breaks the stack again.
+# FIX46: restore the fix35 driver selection that was the ONLY build where the
+# "smb:" device registered successfully (LOGON reached the real -4097 layer).
+# fix36 forced the repo's OPL-lineage ps2smap.irx to take priority; that driver
+# blocks forever registering its NetIF unless NetManInit() ran first, so when
+# fix45 restored fix35's load order (which has no NetManInit/SMSUTILS) the
+# console froze at "加载SMAP". Prefer the historical ps2eth driver again, which
+# accepts the if_conf IP args without needing the OPL NetMan framework.
 PS2SMAP_SOURCE :=
-ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
+ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
+PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
+else ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
 PS2SMAP_SOURCE := iop/__precompiled/ps2smap.irx
 else ifneq ($(wildcard $(PS2SDK)/iop/irx/ps2smap.irx),)
 PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/ps2smap.irx
@@ -695,25 +699,11 @@ endif
 $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ netman_irx
 
-# SMB1 backend: build a diagnostic smbman IOP module from vendored PS2SDK
-# sources with mass:/SMBDEBUG.LOG probes, then embed it. It still registers
-# the same "smb:" fileXio device (the exact driver OPL uses); only extra
-# best-effort logging was added. Reverts to the stock SDK smbman.irx if the
-# vendored module directory is absent.
-LOCAL_SMBMAN_IRX := iop/smbman_dbg/smbman_dbg.irx
-SMBMAN_DEPS := $(wildcard iop/smbman_dbg/*.[ch]) iop/smbman_dbg/imports.lst iop/smbman_dbg/Makefile
-ifneq ($(wildcard iop/smbman_dbg/Makefile),)
-# Vendored diagnostic module present. The .irx is PRODUCED by the rule below,
-# so it must NOT be wildcard-checked at parse time (it does not exist yet).
-$(LOCAL_SMBMAN_IRX): $(SMBMAN_DEPS)
-	$(MAKE) -C iop/smbman_dbg
-SMBMAN_SOURCE := $(LOCAL_SMBMAN_IRX)
-else
+# SMB1 backend: embed smbman.irx, the IOP module that registers the "smb:"
+# fileXio device (the exact driver Open PS2 Loader uses). Ships with PS2SDK.
 SMBMAN_SOURCE := $(PS2SDK)/iop/irx/smbman.irx
-# Only the SDK prebuilt is an external input, so only that needs an existence check.
 ifeq ($(wildcard $(SMBMAN_SOURCE)),)
-$(error Missing $(SMBMAN_SOURCE). Need iop/smbman_dbg or SDK smbman.irx)
-endif
+$(error Missing $(SMBMAN_SOURCE). smbman.irx is required for NETFS/SMB1; update the PS2SDK/toolchain container)
 endif
 $(EE_ASM_DIR)smbman_irx.s: $(SMBMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ smbman_irx
