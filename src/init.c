@@ -598,7 +598,9 @@ static void load_ps2dev9(void)
 		smbDiagStep("v43:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
+#ifdef NETFS
 		smbDiagLog("MOD DEV9: ID=%d ret=%d\n", ID, rcode);
+#endif
 		DPRINTF(" [DEV9]: ID=%d, ret=%d\n", ID, rcode);
 		ps2dev9_loaded = (ID >= 0 && rcode == 0);  //DEV9.IRX must have successfully loaded and returned RESIDENT END.
 		have_ps2dev9 = 1;
