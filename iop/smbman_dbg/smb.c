@@ -414,7 +414,7 @@ negotiate_error:
     retry_count++;
     smbdbg_printf("Negotiate error retry=%d Eclass=0x%02x Ecode=0x%04x magic=0x%08x wc=%d\n",
                   retry_count, NPRsp->smbH.Eclass, NPRsp->smbH.Ecode,
-                  NPRsp->smbH.Magic, NPRsp->smbWordcount);
+                  (unsigned int)NPRsp->smbH.Magic, NPRsp->smbWordcount);
 
     if (retry_count < 3)
         goto negotiate_retry;
@@ -1573,7 +1573,7 @@ int smb_Connect(char *SMBServerIP, int SMBServerPort)
 
     dst_addr.s_addr = inet_addr(SMBServerIP);
     smbdbg_printf("smb_Connect server=%s port=%d inet=0x%08x\n",
-                  SMBServerIP, SMBServerPort, dst_addr.s_addr);
+                  SMBServerIP, SMBServerPort, (unsigned int)dst_addr.s_addr);
 
     // Close the connection if it was already opened
     smb_Disconnect();

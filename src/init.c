@@ -20,8 +20,6 @@ IMPORT_BIN2C(ps2ftpd_irx);
 #ifdef NETFS
 IMPORT_BIN2C(netman_irx);
 IMPORT_BIN2C(smsutils_irx);
-/* fix38: ps2ips.irx = IOP-side ps2ip RPC server (OPL loads it after ps2ip.irx). */
-IMPORT_BIN2C(ps2ips_irx);
 /* SMB1 (smbman) client: registers the smb: fileXio device, same as OPL. */
 IMPORT_BIN2C(smbman_irx);
 #endif
@@ -149,7 +147,6 @@ static int vmcman_last_error = 0;
 #include <nfs.h>
 static u8 have_netman = 0;
 static u8 have_smsutils = 0;
-static u8 have_ps2ips = 0;
 static u8 have_smbman = 0;
 
 static void load_ps2ip(void);
@@ -339,7 +336,6 @@ void netfs_clear_stack_flags(void)
 {
 	have_netman = 0;
 	have_smsutils = 0;
-	have_ps2ips = 0;
 	have_smbman = 0;
 	have_ps2ip = 0;
 	netfs_net_inited = 0;
@@ -594,7 +590,7 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("v38:加载DEV9");
+		smbDiagStep("v37:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 		DPRINTF(" [DEV9]: ID=%d, ret=%d\n", ID, rcode);
@@ -677,7 +673,7 @@ static void load_ps2ip(void)
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("v38:切换ETH栈");
+	smbDiagStep("v37:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -695,7 +691,7 @@ static void load_ps2ip(void)
 	 * "加载SMAP" freeze). */
 	if (!have_netman) {
 #ifdef NETFS
-		smbDiagStep("v38:加载NETMAN");
+		smbDiagStep("v37:加载NETMAN");
 #endif
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
@@ -708,7 +704,7 @@ static void load_ps2ip(void)
 	/* fix36: SMSUTILS is loaded by OPL between NETMAN and SMAP. It exports
 	 * the NetMan NETIF link-mode/status helpers the modern smap needs. */
 	if (!have_smsutils) {
-		smbDiagStep("v38:加载SMSUTILS");
+		smbDiagStep("v37:加载SMSUTILS");
 		ID = SifExecModuleBuffer(smsutils_irx, size_smsutils_irx, 0, NULL, &ret);
 		DPRINTF(" [SMSUTILS]: ID=%d, ret=%d\n", ID, ret);
 		have_smsutils = (ID >= 0 && ret >= 0);
@@ -717,7 +713,7 @@ static void load_ps2ip(void)
 	/* fix36: load the MODERN smap (OPL-lineage) with no args. OPL passes
 	 * (0, NULL); its IP comes from ps2ip_setconfig later, not module args. */
 	if (!have_ps2smap) {
-		smbDiagStep("v38:加载SMAP");
+		smbDiagStep("v37:加载SMAP");
 		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx, 0, NULL, &ret);
 		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2smap = (ID >= 0 && ret >= 0);
@@ -727,27 +723,15 @@ static void load_ps2ip(void)
 
 	/* fix36: load IOP ps2ip AFTER smap has registered its NetIF. */
 	if (!have_ps2ip) {
-		smbDiagStep("v38:加载PS2IP");
+		smbDiagStep("v37:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2ip = (ID >= 0 && ret >= 0);
 	}
 
-	/* fix38: load ps2ips.irx (IOP ps2ip RPC server) right after ps2ip.irx,
-	 * exactly like OPL. smbman reaches the server through the IOP ps2ip stack,
-	 * and that stack can only be initialized/configured from the EE over this
-	 * RPC. Without it the IOP stack stays at its default (no valid IP) and
-	 * smbman's TCP connect fails with -191. */
-	if (!have_ps2ips) {
-		smbDiagStep("v38:加载PS2IPS");
-		ID = SifExecModuleBuffer(ps2ips_irx, size_ps2ips_irx, 0, NULL, &ret);
-		DPRINTF(" [PS2IPS]: ID=%d, ret=%d\n", ID, ret);
-		have_ps2ips = (ID >= 0 && ret >= 0);
-	}
-
-	/* fix38: initialize + apply the static IP to the IOP ps2ip stack the OPL
-	 * way (ps2ip_init()/ps2ip_setconfig() over RPC), so smbman can reach it. */
-	smbDiagStep("v38:配置IP");
+	/* fix36: apply the static IP the OPL way (ps2ip_getconfig/setconfig),
+	 * after the NetIF and ps2ip are both up. */
+	smbDiagStep("v37:配置IP");
 	netfsInitTcpip();
 #endif
 }
@@ -768,9 +752,9 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("v38:加载SMBMAN前准备");
+	smbDiagStep("v37:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("v38:加载SMBMAN");
+	smbDiagStep("v37:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
 	have_smbman = (ID >= 0 && ret >= 0);

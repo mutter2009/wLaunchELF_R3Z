@@ -931,7 +931,7 @@ static int smb_LogOn(smbLogOn_in_t *logon)
         return -SMB_DEVCTL_LOGON_ERR_PROT;
     }
     smbdbg_printf("LOGON STEP=NEGOTIATE OK caps=0x%08x auth=%d pass=%d\n",
-                  capabilities, getServerSpecs()->SecurityMode, getServerSpecs()->PasswordType);
+                  (unsigned int)capabilities, getServerSpecs()->SecurityMode, getServerSpecs()->PasswordType);
 
     r = smb_SessionSetupAndX(logon->User, logon->Password, logon->PasswordType, capabilities);
     if (r < 0) {

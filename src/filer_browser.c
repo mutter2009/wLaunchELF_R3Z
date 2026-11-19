@@ -1112,7 +1112,7 @@ static int smbConnectScreen(void)
 	 * server, so a reachable host reaches LOGON/OPENSHARE and returns. On any
 	 * failure the caller's UDPFS-style fallback does ONE IOP reset, on the
 	 * same thread, with nothing holding SIF. */
-	snprintf(msg, sizeof(msg), "v38 %s (diag)", LNG(SMB_Starting));
+	snprintf(msg, sizeof(msg), "v37 %s (diag)", LNG(SMB_Starting));
 	drawMsg(msg);
 
 	if (netfs_net_inited)
