@@ -388,6 +388,11 @@ static u8 done_setupPowerOff = 0;
 static void smbDiagStep(const char *step)
 {
 	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "%s", step);
+	/* fix43: mirror the bring-up step to mass:/SMBDEBUG.LOG. This is the
+	 * EE-side logger (smb2.c) -- it does not depend on any IOP module being
+	 * loaded, so the LAST step recorded before a load wedges tells us exactly
+	 * where bring-up died (e.g. smbman failing to register -> LOGON -191). */
+	smbDiagLog("STEP %s\n", step);
 	if (!is_early_init)
 		drawMsg(step);
 }
@@ -590,9 +595,10 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("v37:加载DEV9");
+		smbDiagStep("v43:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
+		smbDiagLog("MOD DEV9: ID=%d ret=%d\n", ID, rcode);
 		DPRINTF(" [DEV9]: ID=%d, ret=%d\n", ID, rcode);
 		ps2dev9_loaded = (ID >= 0 && rcode == 0);  //DEV9.IRX must have successfully loaded and returned RESIDENT END.
 		have_ps2dev9 = 1;
@@ -673,7 +679,7 @@ static void load_ps2ip(void)
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("v37:切换ETH栈");
+	smbDiagStep("v43:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -691,9 +697,10 @@ static void load_ps2ip(void)
 	 * "加载SMAP" freeze). */
 	if (!have_netman) {
 #ifdef NETFS
-		smbDiagStep("v37:加载NETMAN");
+		smbDiagStep("v43:加载NETMAN");
 #endif
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
+		smbDiagLog("MOD NETMAN: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
 		have_netman = (ID >= 0 && ret >= 0);
 		if (!have_netman)
@@ -704,8 +711,9 @@ static void load_ps2ip(void)
 	/* fix36: SMSUTILS is loaded by OPL between NETMAN and SMAP. It exports
 	 * the NetMan NETIF link-mode/status helpers the modern smap needs. */
 	if (!have_smsutils) {
-		smbDiagStep("v37:加载SMSUTILS");
+		smbDiagStep("v43:加载SMSUTILS");
 		ID = SifExecModuleBuffer(smsutils_irx, size_smsutils_irx, 0, NULL, &ret);
+		smbDiagLog("MOD SMSUTILS: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [SMSUTILS]: ID=%d, ret=%d\n", ID, ret);
 		have_smsutils = (ID >= 0 && ret >= 0);
 	}
@@ -713,8 +721,9 @@ static void load_ps2ip(void)
 	/* fix36: load the MODERN smap (OPL-lineage) with no args. OPL passes
 	 * (0, NULL); its IP comes from ps2ip_setconfig later, not module args. */
 	if (!have_ps2smap) {
-		smbDiagStep("v37:加载SMAP");
+		smbDiagStep("v43:加载SMAP");
 		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx, 0, NULL, &ret);
+		smbDiagLog("MOD SMAP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2smap = (ID >= 0 && ret >= 0);
 		if (!have_ps2smap)
@@ -723,15 +732,16 @@ static void load_ps2ip(void)
 
 	/* fix36: load IOP ps2ip AFTER smap has registered its NetIF. */
 	if (!have_ps2ip) {
-		smbDiagStep("v37:加载PS2IP");
+		smbDiagStep("v43:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
+		smbDiagLog("MOD PS2IP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2ip = (ID >= 0 && ret >= 0);
 	}
 
 	/* fix36: apply the static IP the OPL way (ps2ip_getconfig/setconfig),
 	 * after the NetIF and ps2ip are both up. */
-	smbDiagStep("v37:配置IP");
+	smbDiagStep("v43:配置IP");
 	netfsInitTcpip();
 #endif
 }
@@ -752,10 +762,14 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("v37:加载SMBMAN前准备");
+	smbDiagStep("v43:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("v37:加载SMBMAN");
+	smbDiagStep("v43:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
+	/* fix43: THE critical line. If smbman fails to load (ID<0 or ret<0) the
+	 * smb: device never registers and every LOGON devctl returns a device-layer
+	 * error (like -191/-19), regardless of the credentials we pass. */
+	smbDiagLog("MOD SMBMAN: ID=%d ret=%d size=%d\n", ID, ret, (int)size_smbman_irx);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
 	have_smbman = (ID >= 0 && ret >= 0);
 }

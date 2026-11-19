@@ -32,16 +32,31 @@
 #include <fcntl.h>
 #include <ps2ip.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include <launchelf.h>
 #include <sbv_patches.h>
 #include <smb2.h>
 #include <ps2smb.h>
 #include <filer_shared.h>
+
+/* fix43: fileXio open flags for the diagnostic logger. Guarded so this builds
+ * with any PS2SDK revision: use the SDK value when present, otherwise the
+ * standard iomanX bit values (same numbers fix41's logger relied on). */
+#ifndef FIO_O_WRONLY
+#define FIO_O_WRONLY 0x0002
+#endif
+#ifndef FIO_O_CREAT
+#define FIO_O_CREAT  0x0200
+#endif
+#ifndef FIO_O_TRUNC
+#define FIO_O_TRUNC  0x0400
+#endif
 
 #define SMB_DEV "smb:"
 
@@ -62,6 +77,86 @@ static void smbDiagPaint(const char *step)
 {
 	snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "%s", step);
 	drawMsg(step);
+}
+
+/* =====================================================================
+ * fix43 DIAGNOSTIC LOG (EE-side, fileXio) -- the whole point of this build.
+ *
+ * Why EE-side and not inside smbman (fix41's failed approach):
+ *   The SDK smb_LogOn() can only ever return 0/-1/-2/-3. The value shown on
+ *   screen (-191) therefore does NOT come from smbman's LOGON logic at all --
+ *   it is an iomanX/fileXio/SIF RPC-layer result. Looking for the answer
+ *   inside smbman was the wrong layer. fix41 embedded a logger in a locally
+ *   rebuilt smbman.irx, but that module never loaded (no version banner,
+ *   ENODEV -19), so its log could never reach disk.
+ *
+ *   This logger runs on the EE and uses genOpen()/genWrite() -- the EXACT API
+ *   wLE already uses to save IPCONFIG.DAT/SMB.CNF to the memcard/USB drive.
+ *   It never touches the smb: device, never issues an SMB devctl, and never
+ *   depends on smbman being loaded. So it works even when LOGON wedges.
+ *
+ * Reliability:
+ *   - Opens/appends/closes on EVERY line. If the console later freezes or the
+ *     IOP is reset, everything written up to that point is already on disk.
+ *   - Tries several absolute paths; the USB drive ("mass:") is first because
+ *     the user boots wLE from USB, so mass: is guaranteed mounted & writable.
+ *   - Failures are silent: logging must never change SMB behaviour.
+ * ===================================================================== */
+void smbDiagLog(const char *fmt, ...)
+{
+	static const char *const paths[] = {
+		"mass:/SMBDEBUG.LOG",
+		"mass:/SYS-CONF/SMBDEBUG.LOG",
+		"mc0:/SMBDEBUG.LOG",
+		"mc1:/SMBDEBUG.LOG"
+	};
+	char line[512];
+	va_list ap;
+	int i, fd;
+
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof(line), fmt, ap);
+	va_end(ap);
+
+	for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
+		/* O_WRONLY|O_CREAT|O_APPEND, then seek to end: append without
+		 * truncating earlier lines, so retries accumulate in one file. */
+		fd = genOpen(paths[i], FIO_O_WRONLY | FIO_O_CREAT);
+		if (fd < 0)
+			continue;
+		genLseek(fd, 0, SEEK_END);
+		genWrite(fd, line, strlen(line));
+		genClose(fd);
+		return; /* first writable path wins */
+	}
+}
+
+/* Marker written at the start of every connect attempt. APPENDS a separator
+ * rather than truncating: module-load lines (DEV9/NETMAN/SMBMAN) are logged
+ * BEFORE init_smb2() runs and are the most valuable clues for -191, so we must
+ * never wipe them. Repeated runs are separated by this marker line. */
+static void smbDiagLogReset(void)
+{
+	static const char *const paths[] = {
+		"mass:/SMBDEBUG.LOG",
+		"mass:/SYS-CONF/SMBDEBUG.LOG",
+		"mc0:/SMBDEBUG.LOG",
+		"mc1:/SMBDEBUG.LOG"
+	};
+	char hdr[160];
+	int i, fd;
+
+	snprintf(hdr, sizeof(hdr),
+	         "\n==== BEGIN wLE v43 SMB attempt (%s) ====\n", __DATE__);
+	for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
+		fd = genOpen(paths[i], FIO_O_WRONLY | FIO_O_CREAT);
+		if (fd < 0)
+			continue;
+		genLseek(fd, 0, SEEK_END);
+		genWrite(fd, hdr, strlen(hdr));
+		genClose(fd);
+		return;
+	}
 }
 
 void smb2_request_reload(void)
@@ -159,17 +254,22 @@ static int smb1_build_logon(struct smb2_share *s, smbLogOn_in_t *logon,
 		memset(&passwd, 0, sizeof(passwd));
 		memset(&hashes, 0, sizeof(hashes));
 		strncpy(passwd.password, s->password, sizeof(passwd.password) - 1);
-		if (fileXioDevctl(SMB_DEV, SMB_DEVCTL_GETPASSWORDHASHES,
-		                  &passwd, sizeof(passwd), &hashes, sizeof(hashes)) == 0) {
-			memcpy(logon->Password, &hashes, sizeof(hashes));
-			logon->PasswordType = HASHED_PASSWORD;
-			memcpy(openshare->Password, &hashes, sizeof(hashes));
-			openshare->PasswordType = HASHED_PASSWORD;
-		} else {
-			strncpy(logon->Password, s->password, sizeof(logon->Password) - 1);
-			logon->PasswordType = PLAINTEXT_PASSWORD;
-			strncpy(openshare->Password, s->password, sizeof(openshare->Password) - 1);
-			openshare->PasswordType = PLAINTEXT_PASSWORD;
+		{
+			int hret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_GETPASSWORDHASHES,
+			                         &passwd, sizeof(passwd), &hashes, sizeof(hashes));
+			smbDiagLog("GETPASSWORDHASHES ret=%d (0x%x) errno=%d\n",
+			           hret, (unsigned int)hret, errno);
+			if (hret == 0) {
+				memcpy(logon->Password, &hashes, sizeof(hashes));
+				logon->PasswordType = HASHED_PASSWORD;
+				memcpy(openshare->Password, &hashes, sizeof(hashes));
+				openshare->PasswordType = HASHED_PASSWORD;
+			} else {
+				strncpy(logon->Password, s->password, sizeof(logon->Password) - 1);
+				logon->PasswordType = PLAINTEXT_PASSWORD;
+				strncpy(openshare->Password, s->password, sizeof(openshare->Password) - 1);
+				openshare->PasswordType = PLAINTEXT_PASSWORD;
+			}
 		}
 	} else {
 		/* No password configured: anonymous / guest share. */
@@ -258,7 +358,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * unreachable — that is what wedged the SIF channel and froze input. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v37:TCP探测 %s:%d", s->server, s->port);
+		snprintf(diagstep, sizeof(diagstep), "v43:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
 	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
@@ -269,10 +369,15 @@ static int smb1_logon(struct smb2_share *s)
 	 * server fine. So the probe result is meaningless here: never let it veto
 	 * LOGON. Keep it only as a DPRINTF diagnostic and let the real smbman
 	 * LOGON/OPENSHARE decide reachability, exactly like OPL does. */
-	if (!smb1_server_reachable(s->server, s->port)) {
-		DPRINTF("smb1: %s:%d EE-socket probe timed out (stack mismatch with "
-		        "IOP ps2ip smap); proceeding to LOGON anyway\n",
-		        s->server, s->port);
+	{
+		int reachable = smb1_server_reachable(s->server, s->port);
+		smbDiagLog("TCP probe %s:%d -> %s\n", s->server, s->port,
+		           reachable ? "reachable" : "timeout (EE/IOP stack mismatch, ignored)");
+		if (!reachable) {
+			DPRINTF("smb1: %s:%d EE-socket probe timed out (stack mismatch with "
+			        "IOP ps2ip smap); proceeding to LOGON anyway\n",
+			        s->server, s->port);
+		}
 	}
 
 	smb1_build_logon(s, &logon, &openshare);
@@ -280,11 +385,21 @@ static int smb1_logon(struct smb2_share *s)
 	 * proves whether we logged on as empty (like OPL) or as GUEST. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v37:LOGON %s/%s", s->server,
+		snprintf(diagstep, sizeof(diagstep), "v43:LOGON %s/%s", s->server,
 		         logon.User[0] ? logon.User : "<空>");
 		smbDiagPaint(diagstep);
 	}
+	/* fix43: dump the EXACT LOGON request. The key question is whether the
+	 * struct we hand to smbman matches OPL byte-for-byte. */
+	smbDiagLog("LOGON req: serverIP='%s' port=%d user='%s' pwType=%d\n",
+	           logon.serverIP, logon.serverPort, logon.User, logon.PasswordType);
+	errno = 0;
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_LOGON, &logon, sizeof(logon), NULL, 0);
+	/* fix43: LOGON raw return is THE diagnostic. SDK smb_LogOn() only ever
+	 * returns 0/-1/-2/-3, so anything else (e.g. -191) is a fileXio/SIF layer
+	 * result = device not registered / RPC failed, not a SMB login rejection. */
+	smbDiagLog("LOGON ret=%d (0x%x) errno=%d size=%d server='%s'\n",
+	           ret, (unsigned int)ret, errno, (int)sizeof(logon), s->server);
 	if (ret < 0) {
 		DPRINTF("smb1: LOGON to %s (user='%s') failed: %d\n", s->server, logon.User, ret);
 		snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "LOGON失败=%d", ret);
@@ -312,10 +427,14 @@ static int smb1_open_share(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v37:打开共享 %s", s->sharename);
+		snprintf(diagstep, sizeof(diagstep), "v43:打开共享 %s", s->sharename);
 		smbDiagPaint(diagstep);
 	}
+	smbDiagLog("OPENSHARE req: share='%s' pwType=%d\n",
+	           openshare.ShareName, openshare.PasswordType);
+	errno = 0;
 	ret = fileXioDevctl(SMB_DEV, SMB_DEVCTL_OPENSHARE, &openshare, sizeof(openshare), NULL, 0);
+	smbDiagLog("OPENSHARE ret=%d (0x%x) errno=%d\n", ret, (unsigned int)ret, errno);
 	if (ret < 0) {
 		DPRINTF("smb1: OPENSHARE %s failed: %d\n", s->sharename, ret);
 		snprintf(smb2_diag_stage, sizeof(smb2_diag_stage), "共享打开失败=%d", ret);
@@ -449,6 +568,10 @@ static int loadSMB2CNF(char *path)
 				continue;
 			}
 			smb2_share->url = strdup(value);
+			smbDiagLog("CNF entry: NAME='%s' URL='%s' USER='%s' PASS_set=%d\n",
+			           smb2_share->name ? smb2_share->name : "", value,
+			           smb2_share->user ? smb2_share->user : "",
+			           (smb2_share->password && smb2_share->password[0]) ? 1 : 0);
 			if (smb1_parse_url(value, smb2_share->server, sizeof(smb2_share->server),
 			                   &smb2_share->port, smb2_share->sharename,
 			                   sizeof(smb2_share->sharename)) < 0) {
@@ -614,6 +737,13 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 {
 	int rc;
 
+	/* fix43: start a fresh log for this attempt, then record the static IP
+	 * configuration wLE applies. This runs before any SMB devctl, so even if
+	 * the very first LOGON wedges, the file already exists on the USB drive. */
+	smbDiagLogReset();
+	smbDiagLog("init_smb2: IP=%s NM=%s GW=%s\n",
+	           ip ? ip : "(null)", netmask ? netmask : "(null)", gw ? gw : "(null)");
+
 	/* fix30: framework init now happens earlier (before smap.irx load) in
 	 * load_ps2ip(); keep the call for safety on paths that reach init_smb2()
 	 * directly. It is a no-op once netfs_net_inited is set. */
@@ -628,15 +758,21 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * hint; real reachability is decided by the bounded TCP probe in
 	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
 	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
-	smbDiagPaint("v37:连接服务器");
+	smbDiagPaint("v43:连接服务器");
 	DPRINTF("Waiting for connection...\n");
-	if (ethWaitValidNetIFLinkState() != 0) {
-		DPRINTF("NetMan link ioctl reports DOWN (OPL smap has no NetMan NetIF); continuing to TCP probe.\n");
+	{
+		int link = ethWaitValidNetIFLinkState();
+		smbDiagLog("NetMan link ioctl = %d (0=DOWN; OPL smap has no NetMan NetIF)\n", link);
+		if (link != 0) {
+			DPRINTF("NetMan link ioctl reports DOWN (OPL smap has no NetMan NetIF); continuing to TCP probe.\n");
+		}
 	}
 	DPRINTF("Network Initialized\n");
 
-	smbDiagPaint("v37:读取SMB.CNF");
+	smbDiagPaint("v43:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
+	smbDiagLog("init_smb2 done: %d share(s) mounted, last_error=%d stage='%s'\n",
+	           rc, smb2_last_error, smb2_diag_stage);
 	DPRINTF("init_smb2: %d share(s) mounted.\n", rc);
 	return rc;
 }

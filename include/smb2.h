@@ -22,6 +22,9 @@ extern struct smb2_share *smb2_shares;
 
 int init_smb2(const char *ip, const char *netmask, const char *gw);
 void deinit_smb2(void);
+/* fix43 diagnostic logger (EE-side fileXio, writes mass:/SMBDEBUG.LOG).
+ * Safe to call from any NETFS code; never touches the smb: device itself. */
+void smbDiagLog(const char *fmt, ...);
 int readSMB2(const char *path, FILEINFO *info, int max);
 int SMB2mkdir(const char *dir, int fileMode);
 int SMB2rmdir(const char *dir);
