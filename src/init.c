@@ -595,7 +595,7 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("v43:加载DEV9");
+		smbDiagStep("v44:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 #ifdef NETFS
@@ -681,7 +681,7 @@ static void load_ps2ip(void)
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("v43:切换ETH栈");
+	smbDiagStep("v44:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -699,12 +699,12 @@ static void load_ps2ip(void)
 	 * "加载SMAP" freeze). */
 	if (!have_netman) {
 #ifdef NETFS
-		smbDiagStep("v43:加载NETMAN");
+		smbDiagStep("v44:加载NETMAN");
 #endif
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		smbDiagLog("MOD NETMAN: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
-		have_netman = (ID >= 0 && ret >= 0);
+		have_netman = (ret >= 0);
 		if (!have_netman)
 			return;
 		netfsInitNetman();
@@ -713,37 +713,45 @@ static void load_ps2ip(void)
 	/* fix36: SMSUTILS is loaded by OPL between NETMAN and SMAP. It exports
 	 * the NetMan NETIF link-mode/status helpers the modern smap needs. */
 	if (!have_smsutils) {
-		smbDiagStep("v43:加载SMSUTILS");
+		smbDiagStep("v44:加载SMSUTILS");
 		ID = SifExecModuleBuffer(smsutils_irx, size_smsutils_irx, 0, NULL, &ret);
 		smbDiagLog("MOD SMSUTILS: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [SMSUTILS]: ID=%d, ret=%d\n", ID, ret);
-		have_smsutils = (ID >= 0 && ret >= 0);
+		have_smsutils = (ret >= 0);
 	}
 
 	/* fix36: load the MODERN smap (OPL-lineage) with no args. OPL passes
 	 * (0, NULL); its IP comes from ps2ip_setconfig later, not module args. */
 	if (!have_ps2smap) {
-		smbDiagStep("v43:加载SMAP");
+		smbDiagStep("v44:加载SMAP");
 		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx, 0, NULL, &ret);
 		smbDiagLog("MOD SMAP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
-		have_ps2smap = (ID >= 0 && ret >= 0);
-		if (!have_ps2smap)
-			return;
+		/* fix44: TRUST ret (the module's _start() result), NOT the ID.
+		 * The PS2SDK LOADFILE RPC returns a negative pseudo-ID (-200) for
+		 * several resident IOP modules even though they loaded fine; ret==0
+		 * is MODULE_RESIDENT_END and is the authoritative success signal.
+		 * fix36 used (ID>=0 && ret>=0) here: real hardware logs ID=-200/ret=0
+		 * for SMAP, so have_ps2smap became false and the early return below
+		 * skipped PS2IP entirely -> smbman had no TCP/IP stack -> LOGON -19.
+		 * fix35 had NO early return and reached the real smbman LOGON (-4097). */
+		have_ps2smap = (ret >= 0);
 	}
 
-	/* fix36: load IOP ps2ip AFTER smap has registered its NetIF. */
+	/* fix44: ALWAYS load IOP ps2ip, even if SMAP's pseudo-ID looked negative.
+	 * PS2IP is mandatory for smbman to register the "smb:" device; skipping it
+	 * is what produced LOGON -19 (ENODEV). */
 	if (!have_ps2ip) {
-		smbDiagStep("v43:加载PS2IP");
+		smbDiagStep("v44:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		smbDiagLog("MOD PS2IP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
-		have_ps2ip = (ID >= 0 && ret >= 0);
+		have_ps2ip = (ret >= 0);
 	}
 
 	/* fix36: apply the static IP the OPL way (ps2ip_getconfig/setconfig),
 	 * after the NetIF and ps2ip are both up. */
-	smbDiagStep("v43:配置IP");
+	smbDiagStep("v44:配置IP");
 	netfsInitTcpip();
 #endif
 }
@@ -764,16 +772,18 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("v43:加载SMBMAN前准备");
+	smbDiagStep("v44:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("v43:加载SMBMAN");
+	smbDiagStep("v44:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	/* fix43: THE critical line. If smbman fails to load (ID<0 or ret<0) the
 	 * smb: device never registers and every LOGON devctl returns a device-layer
 	 * error (like -191/-19), regardless of the credentials we pass. */
 	smbDiagLog("MOD SMBMAN: ID=%d ret=%d size=%d\n", ID, ret, (int)size_smbman_irx);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
-	have_smbman = (ID >= 0 && ret >= 0);
+	/* fix44: trust ret==0 (MODULE_RESIDENT_END) over the negative pseudo-ID
+	 * that the LOADFILE RPC reports for resident modules on real hardware. */
+	have_smbman = (ret >= 0);
 }
 //------------------------------
 //endfunc load_smbman
