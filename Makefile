@@ -182,7 +182,9 @@ ifeq ($(NETFS),1)
     # netman/ps2ip stay for NFS + the TCP reachability pre-check.
     # netfs_shim.o supplies poll()/gethostname() that libnfs' PS2 port needs
     # (previously provided by libsmb2, which the SMB1 backend no longer links).
-    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o smsutils_irx.o
+    # fix47: smsutils_irx.o removed (matches fix35 embed.make, which no longer
+    # generates smsutils_irx.s; fix36 added this object together with the SMAP hang).
+    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o
     EE_CFLAGS += -DNETFS
     EE_LIBS += -lnfs -lps2ip -lnetman
     HAS_ETH = -ETH
@@ -365,7 +367,6 @@ clean:
 	$(MAKE) -C iop/oldlibs/ps2ftpd clean
 	$(MAKE) -C iop/ps2hdd_osd clean
 	$(MAKE) -C iop/dev9_poweroff clean
-	$(MAKE) -C iop/smbman_dbg clean
 	@rm -f githash.h $(EE_BIN) $(EE_BIN_PKD)
 	@rm -rf $(EE_OBJS_DIR)
 	@rm -rf $(EE_ASM_DIR)
