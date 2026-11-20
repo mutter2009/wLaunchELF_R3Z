@@ -40,14 +40,17 @@
 #include <unistd.h>
 #include <errno.h>
 
-/* FIX48: ps2ip_getconfig()/ps2ip_setconfig() are the exact API Open PS2
- * Loader calls in ethsupport.c:ethApplyIPConfig() (which builds successfully
- * in this same CI container and connects to the user's share). They are
- * provided by -lps2ips. Declaring them here avoids depending on which
- * private SDK header (ps2ipc.h vs ps2ips.h) happens to expose them.
+/* FIX48c: the CI container's current PS2SDK (ps2dev/ps2sdk master) exports
+ * the ps2ips config RPC from libps2ips under the ps2ipc_ prefix, NOT the old
+ * ps2ip_getconfig/ps2ip_setconfig names used by older SDKs/OPL:
+ *   ee/rpc/tcpips/src/ps2ipc.c:
+ *     int ps2ipc_ps2ip_setconfig(const t_ip_info *ip_info);
+ *     int ps2ipc_ps2ip_getconfig(char *netif_name, t_ip_info *ip_info);
+ * Declaring them here avoids depending on the private ps2ipc.h header.
+ * ps2ip_init() itself is public in <ps2ips.h> and already links fine.
  * t_ip_info / IP4_ADDR / ip_addr_set come from <tcpip.h> via <sys/socket.h>. */
-extern int ps2ip_getconfig(const char *netif_name, t_ip_info *ip_info);
-extern int ps2ip_setconfig(const t_ip_info *ip_info);
+extern int ps2ipc_ps2ip_getconfig(char *netif_name, t_ip_info *ip_info);
+extern int ps2ipc_ps2ip_setconfig(const t_ip_info *ip_info);
 
 #include <launchelf.h>
 #include <sbv_patches.h>
@@ -738,6 +741,7 @@ int netfsInitTcpip(void)
 {
 	t_ip_info ip_info;
 	struct ip4_addr ip4_ip, ip4_nm, ip4_gw;   /* FIX48b: do NOT shadow the global ip/netmask/gw strings */
+	char ifname[8] = "sm0";   /* FIX48c: getconfig() takes char* (not const) */
 	int ip4[4];
 	int rc;
 
@@ -751,7 +755,7 @@ int netfsInitTcpip(void)
 	smbDiagLog("ps2ip_init() = %d\n", rc);
 
 	/* Apply the static IP to the "sm0" NetIF that smap registered. */
-	if (ps2ip_getconfig("sm0", &ip_info) >= 0) {
+	if (ps2ipc_ps2ip_getconfig(ifname, &ip_info) >= 0) {
 		sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
 		IP4_ADDR(&ip4_ip, ip4[0], ip4[1], ip4[2], ip4[3]);
 		sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
@@ -767,7 +771,7 @@ int netfsInitTcpip(void)
 		ip_info.dhcp_enabled = 0;
 #pragma GCC diagnostic pop
 
-		rc = ps2ip_setconfig(&ip_info);
+		rc = ps2ipc_ps2ip_setconfig(&ip_info);
 		smbDiagLog("ps2ip_setconfig(sm0): IP=%s NM=%s GW=%s -> %d\n",
 		           ip, netmask, gw, rc);
 	} else {
