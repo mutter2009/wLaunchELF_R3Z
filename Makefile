@@ -182,11 +182,14 @@ ifeq ($(NETFS),1)
     # netman/ps2ip stay for NFS + the TCP reachability pre-check.
     # netfs_shim.o supplies poll()/gethostname() that libnfs' PS2 port needs
     # (previously provided by libsmb2, which the SMB1 backend no longer links).
-    # fix47: smsutils_irx.o removed (matches fix35 embed.make, which no longer
-    # generates smsutils_irx.s; fix36 added this object together with the SMAP hang).
-    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o
+    # FIX48: full OPL network stack. Embed SMSUTILS (link helpers) and PS2IPS
+    # (EE RPC server) on top of NETMAN/SMBMAN.
+    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o smsutils_irx.o ps2ips_irx.o
     EE_CFLAGS += -DNETFS
-    EE_LIBS += -lnfs -lps2ip -lnetman
+    # -lps2ips (NOT -lps2ip): provides ps2ip_init() + ps2ipc_ps2ip_get/setconfig
+    # used by the netman-integrated ps2ip-nm stack. BSD socket()/connect()/select()
+    # (used by nfs.c + the TCP pre-check) come from libcglue (-lc), not this lib.
+    EE_LIBS += -lnfs -lps2ips -lnetman
     HAS_ETH = -ETH
 endif
 ifeq ($(UDPFS),1)

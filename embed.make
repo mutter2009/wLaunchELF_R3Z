@@ -645,31 +645,33 @@ $(EE_ASM_DIR)dev9_poweroff_irx.s: $(LOCAL_DEV9_POWEROFF_IRX) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ dev9_poweroff_irx
 
 ifeq ($(ETH),1)
-$(EE_ASM_DIR)ps2ip_irx.s: $(PS2SDK)/iop/irx/ps2ip.irx | $(EE_ASM_DIR)
+# FIX48: align the whole IOP network stack with Open PS2 Loader's proven combo:
+#   standard smap.irx + smsutils.irx + ps2ip-nm.irx + ps2ips.irx
+# fix47 used the standalone ps2ip.irx + pinned ps2smap (which registers its
+# NetIF straight into ps2ip and never reports link to NetMan) -> every module
+# loaded (positive ID) but smbman's lwip_connect() returned ERR_CONN (-4097).
+# Use the netman-integrated ps2ip-nm, exactly like OPL's Makefile does.
+PS2IP_SOURCE := $(PS2SDK)/iop/irx/ps2ip-nm.irx
+ifeq ($(wildcard $(PS2IP_SOURCE)),)
+# Older SDKs may only ship the combined image under this name.
+PS2IP_SOURCE := $(PS2SDK)/iop/irx/ps2ip.irx
+endif
+$(EE_ASM_DIR)ps2ip_irx.s: $(PS2IP_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2ip_irx
 
 $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 
-# ETH stack policy:
-# FIX31: use the repo's pinned ps2smap.irx (the POPStarter/OPL-lineage driver
-# that loads without waiting on the ps2ip NetIF link event). This is the ONLY
-# variant that does not wedge SifExecModuleBuffer() right after "加载SMAP" on
-# this setup. It MUST take priority over $(PS2DEV)/ps2eth/smap/ps2smap.irx,
-# which is otherwise picked first in CI and reintroduces the hang.
-PS2SMAP_SOURCE :=
-ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
-PS2SMAP_SOURCE := iop/__precompiled/ps2smap.irx
-else ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
-else ifneq ($(wildcard $(PS2SDK)/iop/irx/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/ps2smap.irx
-else ifneq ($(wildcard $(PS2SDK)/iop/irx/smap-ps2ip.irx),)
-PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/smap-ps2ip.irx
+# FIX48: standard PS2SDK smap.irx (registers its NetIF with NetMan, reports
+# link state). This is the driver OPL loads; it must be paired with SMSUTILS
+# (loaded before it) and ps2ip-nm. Fall back to the pinned copy if the SDK
+# container does not ship smap.irx.
+PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/smap.irx
+ifeq ($(wildcard $(PS2SMAP_SOURCE)),)
+PS2SMAP_SOURCE := iop/__precompiled/smap.irx
 endif
-
-ifeq ($(strip $(PS2SMAP_SOURCE)),)
-$(error Missing SMAP driver. Provide $(PS2DEV)/ps2eth/smap/ps2smap.irx, iop/__precompiled/ps2smap.irx, or PS2SDK smap modules.)
+ifeq ($(wildcard $(PS2SMAP_SOURCE)),)
+$(error Missing SMAP driver. Provide $(PS2SDK)/iop/irx/smap.irx or iop/__precompiled/smap.irx)
 endif
 
 $(EE_ASM_DIR)ps2smap_irx.s: $(PS2SMAP_SOURCE) | $(EE_ASM_DIR)
@@ -691,6 +693,28 @@ $(error Missing $(NETMAN_SOURCE). netman.irx is required for NETFS; update the P
 endif
 $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ netman_irx
+
+# FIX48: SMSUTILS — OPL loads this between NetManInit() and smap.irx. It
+# exports the NetMan NETIF link-mode/status helpers the standard smap needs.
+SMSUTILS_SOURCE := iop/__precompiled/smsutils.irx
+ifeq ($(wildcard $(SMSUTILS_SOURCE)),)
+SMSUTILS_SOURCE := $(PS2SDK)/iop/irx/smsutils.irx
+endif
+ifeq ($(wildcard $(SMSUTILS_SOURCE)),)
+$(error Missing smsutils.irx. Provide iop/__precompiled/smsutils.irx or update the PS2SDK/toolchain container)
+endif
+$(EE_ASM_DIR)smsutils_irx.s: $(SMSUTILS_SOURCE) | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ smsutils_irx
+
+# FIX48: PS2IPS — the EE-side RPC server for ps2ip-nm. smbman talks to the
+# IOP lwIP through I_lwip_*; ps2ips provides the matching EE socket/config RPC
+# layer. OPL loads ps2ip-nm.irx then ps2ips.irx then calls ps2ip_init().
+PS2IPS_SOURCE := $(PS2SDK)/iop/irx/ps2ips.irx
+ifeq ($(wildcard $(PS2IPS_SOURCE)),)
+$(error Missing $(PS2IPS_SOURCE). ps2ips.irx is required for the OPL network stack; update the PS2SDK/toolchain container)
+endif
+$(EE_ASM_DIR)ps2ips_irx.s: $(PS2IPS_SOURCE) | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ ps2ips_irx
 
 # SMB1 backend: embed smbman.irx, the IOP module that registers the "smb:"
 # fileXio device (the exact driver Open PS2 Loader uses). Ships with PS2SDK.
