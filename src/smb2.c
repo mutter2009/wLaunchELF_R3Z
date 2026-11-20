@@ -737,7 +737,7 @@ int netfsInitNetman(void)
 int netfsInitTcpip(void)
 {
 	t_ip_info ip_info;
-	struct ip4_addr ipaddr, netmask, gw;
+	struct ip4_addr ip4_ip, ip4_nm, ip4_gw;   /* FIX48b: do NOT shadow the global ip/netmask/gw strings */
 	int ip4[4];
 	int rc;
 
@@ -753,17 +753,17 @@ int netfsInitTcpip(void)
 	/* Apply the static IP to the "sm0" NetIF that smap registered. */
 	if (ps2ip_getconfig("sm0", &ip_info) >= 0) {
 		sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&ipaddr, ip4[0], ip4[1], ip4[2], ip4[3]);
+		IP4_ADDR(&ip4_ip, ip4[0], ip4[1], ip4[2], ip4[3]);
 		sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&netmask, ip4[0], ip4[1], ip4[2], ip4[3]);
+		IP4_ADDR(&ip4_nm, ip4[0], ip4[1], ip4[2], ip4[3]);
 		sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&gw, ip4[0], ip4[1], ip4[2], ip4[3]);
+		IP4_ADDR(&ip4_gw, ip4[0], ip4[1], ip4[2], ip4[3]);
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
-		ip_addr_set((struct ip4_addr *)&ip_info.ipaddr, &ipaddr);
-		ip_addr_set((struct ip4_addr *)&ip_info.netmask, &netmask);
-		ip_addr_set((struct ip4_addr *)&ip_info.gw, &gw);
+		ip_addr_set((struct ip4_addr *)&ip_info.ipaddr, &ip4_ip);
+		ip_addr_set((struct ip4_addr *)&ip_info.netmask, &ip4_nm);
+		ip_addr_set((struct ip4_addr *)&ip_info.gw, &ip4_gw);
 		ip_info.dhcp_enabled = 0;
 #pragma GCC diagnostic pop
 
