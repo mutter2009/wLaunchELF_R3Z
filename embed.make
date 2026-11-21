@@ -645,31 +645,37 @@ $(EE_ASM_DIR)dev9_poweroff_irx.s: $(LOCAL_DEV9_POWEROFF_IRX) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ dev9_poweroff_irx
 
 ifeq ($(ETH),1)
-$(EE_ASM_DIR)ps2ip_irx.s: $(PS2SDK)/iop/irx/ps2ip.irx | $(EE_ASM_DIR)
+# FIX52: use the FULL matched network stack extracted from the working
+# anyi48.ELF (LZMA-unpacked). Generic SDK ps2ip/ps2smap/ps2ips are NOT
+# interchangeable: wLE's EE socket API (-lps2ip, PS2IPS_RPC_ID 0xB0125F2)
+# expects the ps2ip(lwIP core) + ps2ips(RPC bridge) pair. The old standalone
+# ps2ip.irx + POPStarter ps2smap had no ps2ips bridge -> EE->IOP config and
+# smbman lwip_connect() never got a route -> LOGON -4097.
+PS2IP_SOURCE := iop/__precompiled/ps2ip_anyi.irx
+ifeq ($(wildcard $(PS2IP_SOURCE)),)
+$(error Missing $(PS2IP_SOURCE). FIX52 requires the extracted anyi48 ps2ip.irx)
+endif
+$(EE_ASM_DIR)ps2ip_irx.s: $(PS2IP_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ ps2ip_irx
+
+# ps2ips.irx: the TCP/IP Stack RPC server that pairs with ps2ip. This is the
+# missing bridge in fix35..fix51. anyi48 ships it as a separate module.
+PS2IPS_SOURCE := iop/__precompiled/ps2ips_anyi.irx
+ifeq ($(wildcard $(PS2IPS_SOURCE)),)
+$(error Missing $(PS2IPS_SOURCE). FIX52 requires the extracted anyi48 ps2ips.irx)
+endif
+$(EE_ASM_DIR)ps2ips_irx.s: $(PS2IPS_SOURCE) | $(EE_ASM_DIR)
+	$(BIN2S) $< $@ ps2ips_irx
 
 $(EE_ASM_DIR)udptty.s: $(PS2SDK)/iop/irx/udptty.irx | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ udptty_irx
 
-# ETH stack policy:
-# FIX31: use the repo's pinned ps2smap.irx (the POPStarter/OPL-lineage driver
-# that loads without waiting on the ps2ip NetIF link event). This is the ONLY
-# variant that does not wedge SifExecModuleBuffer() right after "加载SMAP" on
-# this setup. It MUST take priority over $(PS2DEV)/ps2eth/smap/ps2smap.irx,
-# which is otherwise picked first in CI and reintroduces the hang.
-PS2SMAP_SOURCE :=
-ifneq ($(wildcard iop/__precompiled/ps2smap.irx),)
-PS2SMAP_SOURCE := iop/__precompiled/ps2smap.irx
-else ifneq ($(wildcard $(PS2DEV)/ps2eth/smap/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2DEV)/ps2eth/smap/ps2smap.irx
-else ifneq ($(wildcard $(PS2SDK)/iop/irx/ps2smap.irx),)
-PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/ps2smap.irx
-else ifneq ($(wildcard $(PS2SDK)/iop/irx/smap-ps2ip.irx),)
-PS2SMAP_SOURCE := $(PS2SDK)/iop/irx/smap-ps2ip.irx
-endif
-
-ifeq ($(strip $(PS2SMAP_SOURCE)),)
-$(error Missing SMAP driver. Provide $(PS2DEV)/ps2eth/smap/ps2smap.irx, iop/__precompiled/ps2smap.irx, or PS2SDK smap modules.)
+# FIX52: use the standard smap from anyi48 (has "SMapInit: NetIF added to
+# ps2ip"), NOT the POPStarter ps2smap.irx. It registers its NetIF with the
+# IOP ps2ip so smbman can actually route TCP to the server.
+PS2SMAP_SOURCE := iop/__precompiled/smap_anyi.irx
+ifeq ($(wildcard $(PS2SMAP_SOURCE)),)
+$(error Missing $(PS2SMAP_SOURCE). FIX52 requires the extracted anyi48 smap.irx)
 endif
 
 $(EE_ASM_DIR)ps2smap_irx.s: $(PS2SMAP_SOURCE) | $(EE_ASM_DIR)
@@ -692,11 +698,13 @@ endif
 $(EE_ASM_DIR)netman_irx.s: $(NETMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ netman_irx
 
-# SMB1 backend: embed smbman.irx, the IOP module that registers the "smb:"
-# fileXio device (the exact driver Open PS2 Loader uses). Ships with PS2SDK.
-SMBMAN_SOURCE := $(PS2SDK)/iop/irx/smbman.irx
+# SMB1 backend: FIX52 uses the smbman extracted from anyi48.ELF — a matched
+# SMBv1 client (dialect "NT LM 0.12", \PIPE\LANMAN) from the same working
+# stack as ps2ip/ps2ips/smap. Mixing the SDK smbman with the anyi48 stack can
+# leave the smb: device talking to a different lwIP instance.
+SMBMAN_SOURCE := iop/__precompiled/smbman_anyi.irx
 ifeq ($(wildcard $(SMBMAN_SOURCE)),)
-$(error Missing $(SMBMAN_SOURCE). smbman.irx is required for NETFS/SMB1; update the PS2SDK/toolchain container)
+$(error Missing $(SMBMAN_SOURCE). FIX52 requires the extracted anyi48 smbman.irx)
 endif
 $(EE_ASM_DIR)smbman_irx.s: $(SMBMAN_SOURCE) | $(EE_ASM_DIR)
 	$(BIN2S) $< $@ smbman_irx

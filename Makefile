@@ -184,7 +184,10 @@ ifeq ($(NETFS),1)
     # (previously provided by libsmb2, which the SMB1 backend no longer links).
     # fix47: smsutils_irx.o removed (matches fix35 embed.make, which no longer
     # generates smsutils_irx.s; fix36 added this object together with the SMAP hang).
-    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o
+    # FIX52: add ps2ips_irx.o — the TCP/IP Stack RPC server from anyi48 that
+    # bridges wLE's EE -lps2ip socket calls to the IOP ps2ip/lwIP core. This is
+    # the module fix35..fix51 lacked, causing EE/IOP config mismatch (-4097).
+    EE_OBJS += smb2.o nfs.o netfs_shim.o netman_irx.o smbman_irx.o ps2ips_irx.o
     EE_CFLAGS += -DNETFS
     EE_LIBS += -lnfs -lps2ip -lnetman
     HAS_ETH = -ETH
