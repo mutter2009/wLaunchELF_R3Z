@@ -594,7 +594,7 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("v50:加载DEV9");
+		smbDiagStep("v51:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 #ifdef NETFS
@@ -683,7 +683,7 @@ static void load_ps2ip(void)
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("v50:切换ETH栈");
+	smbDiagStep("v51:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -703,7 +703,7 @@ static void load_ps2ip(void)
 	 * *ret on success. fix44 trusted it and wrongly declared success.
 	 * Order: NETMAN -> PS2IP -> SMAP(with IP args) -> netfsInitTcpip. */
 	if (!have_netman) {
-		smbDiagStep("v50:加载NETMAN");
+		smbDiagStep("v51:加载NETMAN");
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		smbDiagLog("MOD NETMAN: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
@@ -715,7 +715,7 @@ static void load_ps2ip(void)
 	/* fix45: load IOP ps2ip BEFORE smap — the smap registers its NetIF with
 	 * ps2ip on load, so ps2ip must already be resident. */
 	if (!have_ps2ip) {
-		smbDiagStep("v50:加载PS2IP");
+		smbDiagStep("v51:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
 		smbDiagLog("MOD PS2IP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
@@ -727,7 +727,7 @@ static void load_ps2ip(void)
 	/* fix45: pass the IP/netmask/gw config block to smap, exactly like fix35
 	 * (which worked). fix36 dropped these args; the pinned smap needs them. */
 	if (!have_ps2smap) {
-		smbDiagStep("v50:加载SMAP");
+		smbDiagStep("v51:加载SMAP");
 		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx,
 		                         if_conf_len, &if_conf[0], &ret);
 		smbDiagLog("MOD SMAP: ID=%d ret=%d conf=%d\n", ID, ret, if_conf_len);
@@ -737,7 +737,7 @@ static void load_ps2ip(void)
 
 	/* fix45: SMSUTILS is intentionally NOT loaded (as in fix35). It was
 	 * introduced in fix36 together with the regression. */
-	smbDiagStep("v50:配置IP");
+	smbDiagStep("v51:配置IP");
 	netfsInitTcpip();
 #endif
 }
@@ -758,16 +758,16 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("v50:加载SMBMAN前准备");
+	smbDiagStep("v51:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("v50:加载SMBMAN");
+	smbDiagStep("v51:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	/* fix43: THE critical line. If smbman fails to load (ID<0 or ret<0) the
 	 * smb: device never registers and every LOGON devctl returns a device-layer
 	 * error (like -191/-19), regardless of the credentials we pass. */
 	smbDiagLog("MOD SMBMAN: ID=%d ret=%d size=%d\n", ID, ret, (int)size_smbman_irx);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
-	/* v50: strict check. SifExecModuleBuffer only writes *ret on success;
+	/* v51: strict check. SifExecModuleBuffer only writes *ret on success;
 	 * a failed load leaves a stale ret, so require a positive ID as well. */
 	have_smbman = (ID >= 0 && ret >= 0);
 }
@@ -803,12 +803,12 @@ int init_netfs(void)
 		DPRINTF(" [NETFS]: network stack unavailable, aborting\n");
 		return -1;
 	}
-	/* v50: keep fix49's no-freeze guard. If any IOP module failed to load,
+	/* v51: keep fix49's no-freeze guard. If any IOP module failed to load,
 	 * never enter init_smb2() (ps2ipInit wait-looped forever on that path).
 	 * v47's standalone stack has no ps2ips module, so check the three it does
 	 * use. On failure show a clean "连接失败" instead of hanging/empty dir. */
 	if (!have_ps2ip || !have_ps2smap) {
-		smbDiagStep("v50:网络模块加载失败");
+		smbDiagStep("v51:网络模块加载失败");
 		smb2_last_error = SMB2_ERR_CONNECT;
 		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s [网络模块加载失败 ps2ip=%d smap=%d]",
 		         LNG(SMB_Err_Connect), have_ps2ip, have_ps2smap);
@@ -820,7 +820,7 @@ int init_netfs(void)
 	/* Load the SMB1 client driver before init_smb2() issues LOGON/OPENSHARE. */
 	load_smbman();
 	if (!have_smbman) {
-		smbDiagStep("v50:SMBMAN加载失败");
+		smbDiagStep("v51:SMBMAN加载失败");
 		smb2_last_error = SMB2_ERR_CONNECT;
 		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s [SMBMAN加载失败]",
 		         LNG(SMB_Err_Connect));
