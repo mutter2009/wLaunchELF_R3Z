@@ -1112,7 +1112,7 @@ static int smbConnectScreen(void)
 	 * server, so a reachable host reaches LOGON/OPENSHARE and returns. On any
 	 * failure the caller's UDPFS-style fallback does ONE IOP reset, on the
 	 * same thread, with nothing holding SIF. */
-	snprintf(msg, sizeof(msg), "v53 %s (diag)", LNG(SMB_Starting));
+	snprintf(msg, sizeof(msg), "%s (diag)", LNG(SMB_Starting));
 	drawMsg(msg);
 
 	if (netfs_net_inited)
@@ -1190,7 +1190,7 @@ int getFilePath(char *out, int cnfmode)
 		 * the loop, but setFileList() runs at the BOTTOM of the same pass —
 		 * so on the very keypress that entered "SMB:" the empty directory was
 		 * already listed and drawn BEFORE this gate could run. That was the
-		 * "先出空目录、再画 v26 连接文字" bug. See the browser_cd block. */
+		 * "先出空目录、再画 连接文字" bug. See the browser_cd block. */
 #endif
 
 		//Pad response section
