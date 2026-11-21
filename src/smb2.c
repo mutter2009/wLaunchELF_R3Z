@@ -160,7 +160,7 @@ static void smbDiagLogReset(void)
 	int i, fd;
 
 	snprintf(hdr, sizeof(hdr),
-	         "\n==== BEGIN wLE v48 SMB attempt (%s) ====\n", __DATE__);
+	         "\n==== BEGIN wLE v49 SMB attempt (%s) ====\n", __DATE__);
 	for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
 		fd = genOpen(paths[i], FIO_O_WRONLY | FIO_O_CREAT);
 		if (fd < 0)
@@ -371,7 +371,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * unreachable — that is what wedged the SIF channel and froze input. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v48:TCP探测 %s:%d", s->server, s->port);
+		snprintf(diagstep, sizeof(diagstep), "v49:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
 	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
@@ -398,7 +398,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * proves whether we logged on as empty (like OPL) or as GUEST. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v48:LOGON %s/%s", s->server,
+		snprintf(diagstep, sizeof(diagstep), "v49:LOGON %s/%s", s->server,
 		         logon.User[0] ? logon.User : "<空>");
 		smbDiagPaint(diagstep);
 	}
@@ -440,7 +440,7 @@ static int smb1_open_share(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v48:打开共享 %s", s->sharename);
+		snprintf(diagstep, sizeof(diagstep), "v49:打开共享 %s", s->sharename);
 		smbDiagPaint(diagstep);
 	}
 	smbDiagLog("OPENSHARE req: share='%s' pwType=%d\n",
@@ -807,7 +807,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * hint; real reachability is decided by the bounded TCP probe in
 	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
 	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
-	smbDiagPaint("v48:连接服务器");
+	smbDiagPaint("v49:连接服务器");
 	DPRINTF("Waiting for connection...\n");
 	{
 		int link = ethWaitValidNetIFLinkState();
@@ -818,7 +818,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	}
 	DPRINTF("Network Initialized\n");
 
-	smbDiagPaint("v48:读取SMB.CNF");
+	smbDiagPaint("v49:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
 	smbDiagLog("init_smb2 done: %d share(s) mounted, last_error=%d stage='%s'\n",
 	           rc, smb2_last_error, smb2_diag_stage);
