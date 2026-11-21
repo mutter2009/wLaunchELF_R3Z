@@ -31,7 +31,6 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <ps2ip.h>
-#include <ps2ips.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -39,18 +38,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
-
-/* FIX48c: the CI container's current PS2SDK (ps2dev/ps2sdk master) exports
- * the ps2ips config RPC from libps2ips under the ps2ipc_ prefix, NOT the old
- * ps2ip_getconfig/ps2ip_setconfig names used by older SDKs/OPL:
- *   ee/rpc/tcpips/src/ps2ipc.c:
- *     int ps2ipc_ps2ip_setconfig(const t_ip_info *ip_info);
- *     int ps2ipc_ps2ip_getconfig(char *netif_name, t_ip_info *ip_info);
- * Declaring them here avoids depending on the private ps2ipc.h header.
- * ps2ip_init() itself is public in <ps2ips.h> and already links fine.
- * t_ip_info / IP4_ADDR / ip_addr_set come from <tcpip.h> via <sys/socket.h>. */
-extern int ps2ipc_ps2ip_getconfig(char *netif_name, t_ip_info *ip_info);
-extern int ps2ipc_ps2ip_setconfig(const t_ip_info *ip_info);
 
 #include <launchelf.h>
 #include <sbv_patches.h>
@@ -160,7 +147,7 @@ static void smbDiagLogReset(void)
 	int i, fd;
 
 	snprintf(hdr, sizeof(hdr),
-	         "\n==== BEGIN wLE v49 SMB attempt (%s) ====\n", __DATE__);
+	         "\n==== BEGIN wLE v50 DIAG SMB attempt (%s) ====\n", __DATE__);
 	for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); i++) {
 		fd = genOpen(paths[i], FIO_O_WRONLY | FIO_O_CREAT);
 		if (fd < 0)
@@ -330,6 +317,17 @@ static int smb1_server_reachable(const char *server, int port)
 	if (fd < 0)
 		return 1; /* socket unavailable: don't block LOGON on this account */
 
+	/* v50 DIAG: which local IP does the EE lwIP think it has? If this prints
+	 * 0.0.0.0 the EE socket stack was never configured (explains timeout). */
+	{
+		struct sockaddr_in local;
+		socklen_t llen = sizeof(local);
+		memset(&local, 0, sizeof(local));
+		if (getsockname(fd, (struct sockaddr *)&local, &llen) == 0)
+			smbDiagLog("PROBE local addr=%s:%d\n",
+			           inet_ntoa(local.sin_addr), ntohs(local.sin_port));
+	}
+
 	flags = fcntl(fd, F_GETFL, 0);
 	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
@@ -344,6 +342,14 @@ static int smb1_server_reachable(const char *server, int port)
 		tv.tv_usec = (SMB1_PROBE_TIMEOUT_MS % 1000) * 1000;
 		rc = select(fd + 1, &rfds, &wfds, NULL, &tv);
 		if (rc <= 0) { /* timeout or select error */
+			/* v50 DIAG: SO_ERROR tells us WHY. ENETUNREACH(1013 on PS2)/EHOSTUNREACH
+			 * = no route / IP not applied; ETIMEDOUT(110) = IP set but link dead;
+			 * ECONNREFUSED(111) = host up, port closed. */
+			err = 0;
+			errlen = sizeof(err);
+			getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+			smbDiagLog("PROBE %s:%d select=%d SO_ERROR=%d errno=%d (EE stack only)\n",
+			           server, port, rc, err, errno);
 			close(fd);
 			return 0;
 		}
@@ -353,6 +359,8 @@ static int smb1_server_reachable(const char *server, int port)
 	err = 0;
 	errlen = sizeof(err);
 	getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+	smbDiagLog("PROBE %s:%d connect rc=%d SO_ERROR=%d errno=%d -> %s\n",
+	           server, port, rc, err, errno, (err == 0) ? "OK" : "FAIL");
 	close(fd);
 	return (err == 0);
 }
@@ -371,7 +379,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * unreachable — that is what wedged the SIF channel and froze input. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v49:TCP探测 %s:%d", s->server, s->port);
+		snprintf(diagstep, sizeof(diagstep), "v50:TCP探测 %s:%d", s->server, s->port);
 		smbDiagPaint(diagstep);
 	}
 	/* fix35: this EE-side socket probe uses the EE lwIP stack (-lps2ip), but
@@ -398,7 +406,7 @@ static int smb1_logon(struct smb2_share *s)
 	 * proves whether we logged on as empty (like OPL) or as GUEST. */
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v49:LOGON %s/%s", s->server,
+		snprintf(diagstep, sizeof(diagstep), "v50:LOGON %s/%s", s->server,
 		         logon.User[0] ? logon.User : "<空>");
 		smbDiagPaint(diagstep);
 	}
@@ -440,7 +448,7 @@ static int smb1_open_share(struct smb2_share *s)
 	smb1_build_logon(s, &logon, &openshare);
 	{
 		char diagstep[96];
-		snprintf(diagstep, sizeof(diagstep), "v49:打开共享 %s", s->sharename);
+		snprintf(diagstep, sizeof(diagstep), "v50:打开共享 %s", s->sharename);
 		smbDiagPaint(diagstep);
 	}
 	smbDiagLog("OPENSHARE req: share='%s' pwType=%d\n",
@@ -724,60 +732,30 @@ int netfsInitNetman(void)
 	return 0;
 }
 
-/* FIX48: OPL-style EE-side TCP/IP bring-up.
- *
- * fix47 loaded the standalone ps2ip.irx and configured it with the legacy
- * ps2ipInit(ip,nm,gw). That left smbman's I_lwip_connect() at ERR_CONN (-4097):
- * the standard smap registers its NetIF with NetMan as "sm0", and the legacy
- * API was not applying the config to that interface.
- *
- * OPL instead loads ps2ip-nm.irx + ps2ips.irx and does:
- *   ps2ip_init()                       -> start the RPC/lwIP service
- *   ps2ip_getconfig("sm0", &ip_info)   -> read the live interface config
- *   set ipaddr/netmask/gw, dhcp_enabled=0
- *   ps2ip_setconfig(&ip_info)          -> apply the static IP to "sm0"
- * This is the exact sequence below. -lps2ips (not -lps2ip) provides these. */
+/* fix36: EE-side ps2ip configuration (IP/netmask/gw). Called AFTER smap has
+ * registered its NetIF and IOP ps2ip is loaded. Idempotent. */
 int netfsInitTcpip(void)
 {
-	t_ip_info ip_info;
-	struct ip4_addr ip4_ip, ip4_nm, ip4_gw;   /* FIX48b: do NOT shadow the global ip/netmask/gw strings */
-	char ifname[8] = "sm0";   /* FIX48c: getconfig() takes char* (not const) */
+	struct ip4_addr IP, NM, GW;
 	int ip4[4];
-	int rc;
 
 	if (netfs_net_inited)
 		return 0;
 
-	netfsInitNetman(); /* safe no-op: already done right after netman load */
-
-	/* Start the netman-integrated ps2ip RPC service (OPL: ps2ip_init()). */
-	rc = ps2ip_init();
-	smbDiagLog("ps2ip_init() = %d\n", rc);
-
-	/* Apply the static IP to the "sm0" NetIF that smap registered. */
-	if (ps2ipc_ps2ip_getconfig(ifname, &ip_info) >= 0) {
-		sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&ip4_ip, ip4[0], ip4[1], ip4[2], ip4[3]);
-		sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&ip4_nm, ip4[0], ip4[1], ip4[2], ip4[3]);
-		sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
-		IP4_ADDR(&ip4_gw, ip4[0], ip4[1], ip4[2], ip4[3]);
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-		ip_addr_set((struct ip4_addr *)&ip_info.ipaddr, &ip4_ip);
-		ip_addr_set((struct ip4_addr *)&ip_info.netmask, &ip4_nm);
-		ip_addr_set((struct ip4_addr *)&ip_info.gw, &ip4_gw);
-		ip_info.dhcp_enabled = 0;
-#pragma GCC diagnostic pop
-
-		rc = ps2ipc_ps2ip_setconfig(&ip_info);
-		smbDiagLog("ps2ip_setconfig(sm0): IP=%s NM=%s GW=%s -> %d\n",
-		           ip, netmask, gw, rc);
-	} else {
-		smbDiagLog("ps2ip_getconfig(sm0) FAILED\n");
+	netfsInitNetman(); /* safe no-op if already done before smap */
+	sscanf(ip, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	IP4_ADDR(&IP, ip4[0], ip4[1], ip4[2], ip4[3]);
+	sscanf(netmask, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	IP4_ADDR(&NM, ip4[0], ip4[1], ip4[2], ip4[3]);
+	sscanf(gw, "%d.%d.%d.%d", &ip4[0], &ip4[1], &ip4[2], &ip4[3]);
+	IP4_ADDR(&GW, ip4[0], ip4[1], ip4[2], ip4[3]);
+	/* v50 DIAG: record the return of the EE->IOP config RPC. A failure here
+	 * means IOP ps2ip never applied IP/NM/GW, so smbman's lwip_connect()
+	 * would have no route and fail with ERR_CONN (-4097). */
+	{
+		int iprc = ps2ipInit(&IP, &NM, &GW);
+		smbDiagLog("ps2ipInit: IP=%s NM=%s GW=%s -> %d\n", ip, netmask, gw, iprc);
 	}
-
 	netfs_net_inited = 1;
 	return 0;
 }
@@ -807,7 +785,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	 * hint; real reachability is decided by the bounded TCP probe in
 	 * smb1_logon(), so a genuinely unreachable server still fails cleanly
 	 * (SMB2_ERR_CONNECT) without entering an empty directory. */
-	smbDiagPaint("v49:连接服务器");
+	smbDiagPaint("v50:连接服务器");
 	DPRINTF("Waiting for connection...\n");
 	{
 		int link = ethWaitValidNetIFLinkState();
@@ -818,7 +796,7 @@ int init_smb2(const char *ip, const char *netmask, const char *gw)
 	}
 	DPRINTF("Network Initialized\n");
 
-	smbDiagPaint("v49:读取SMB.CNF");
+	smbDiagPaint("v50:读取SMB.CNF");
 	rc = smb2LoadAllCNF();
 	smbDiagLog("init_smb2 done: %d share(s) mounted, last_error=%d stage='%s'\n",
 	           rc, smb2_last_error, smb2_diag_stage);

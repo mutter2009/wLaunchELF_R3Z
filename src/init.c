@@ -23,10 +23,6 @@ IMPORT_BIN2C(netman_irx);
  * this symbol; fix36 added it together with the SMAP-hang regression. */
 /* SMB1 (smbman) client: registers the smb: fileXio device, same as OPL. */
 IMPORT_BIN2C(smbman_irx);
-/* FIX48: full OPL stack — SMSUTILS (between NetManInit and smap) and PS2IPS
- * (EE RPC server for ps2ip-nm). smb2.c calls ps2ip_init() after these load. */
-IMPORT_BIN2C(smsutils_irx);
-IMPORT_BIN2C(ps2ips_irx);
 #endif
 
 #ifdef UDPFS
@@ -152,8 +148,6 @@ static int vmcman_last_error = 0;
 #include <nfs.h>
 static u8 have_netman = 0;
 static u8 have_smbman = 0;
-static u8 have_smsutils = 0;
-static u8 have_ps2ips = 0;
 
 static void load_ps2ip(void);
 static void load_smbman(void);
@@ -342,8 +336,6 @@ void netfs_clear_stack_flags(void)
 {
 	have_netman = 0;
 	have_smbman = 0;
-	have_smsutils = 0;
-	have_ps2ips = 0;
 	have_ps2ip = 0;
 	netfs_net_inited = 0;
 	netman_inited = 0;
@@ -602,7 +594,7 @@ static void load_ps2dev9(void)
 
 	if (!have_ps2dev9) {
 #ifdef NETFS
-		smbDiagStep("v49:加载DEV9");
+		smbDiagStep("v50:加载DEV9");
 #endif
 		ID = SifExecModuleBuffer(ps2dev9_irx, size_ps2dev9_irx, 0, NULL, &rcode);
 #ifdef NETFS
@@ -688,13 +680,10 @@ static void load_ps2ip(void)
 	 * module actually loads. A failed load left ret with a stale/garbage value
 	 * which fix44's `ret >= 0` test wrongly accepted as success. */
 	int ret = 0, ID __attribute__((unused));
-#ifdef NETFS
-	int netman_ok = 0;
-#endif
 
 #if defined(ETH) && defined(UDPFS)
 #ifdef NETFS
-	smbDiagStep("v49:切换ETH栈");
+	smbDiagStep("v50:切换ETH栈");
 #endif
 	switchNetworkStack(NETWORK_STACK_ETH);
 #endif
@@ -705,15 +694,16 @@ static void load_ps2ip(void)
 	}
 
 #ifdef NETFS
-	/* FIX48: reproduce OPL's ethLoadModules() EXACTLY. fix47 used the legacy
-	 * standalone stack (NETMAN -> ps2ip.irx -> pinned ps2smap with if_conf)
-	 * which loaded fine but left smbman's lwip_connect() at ERR_CONN (-4097).
-	 * OPL's proven order is:
-	 *   NETMAN -> NetManInit() -> SMSUTILS -> smap.irx -> ps2ip-nm
-	 *          -> ps2ips -> ps2ip_init()
-	 * No mix-and-match: every module here is the one OPL ships/loads. */
+	/* fix45: restore the fix35 stack order — the ONLY configuration that ever
+	 * registered "smb:" on this setup (LOGON reached the real smbman error
+	 * -4097). fix36 introduced smsutils.irx AND moved PS2IP after SMAP; since
+	 * then SMAP/PS2IP/SMBMAN all return NEGATIVE IDs (-200/-400/-200) = LOAD
+	 * FAILED, so "smb:" never registers and LOGON returns -19 (ENODEV).
+	 * The ret=0 in the log is a stale value: SifExecModuleBuffer only writes
+	 * *ret on success. fix44 trusted it and wrongly declared success.
+	 * Order: NETMAN -> PS2IP -> SMAP(with IP args) -> netfsInitTcpip. */
 	if (!have_netman) {
-		smbDiagStep("v49:加载NETMAN");
+		smbDiagStep("v50:加载NETMAN");
 		ID = SifExecModuleBuffer(netman_irx, size_netman_irx, 0, NULL, &ret);
 		smbDiagLog("MOD NETMAN: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [NETMAN]: ID=%d, ret=%d\n", ID, ret);
@@ -721,61 +711,34 @@ static void load_ps2ip(void)
 		if (!have_netman)
 			return;
 	}
-	/* OPL calls NetManInit() right after loading netman, BEFORE smap. */
-	netman_ok = netfsInitNetman();
-	smbDiagLog("NetManInit: %d\n", netman_ok);
 
-	/* SMSUTILS exports the NetMan NETIF link helpers the standard smap needs. */
-	if (!have_smsutils) {
-		smbDiagStep("v49:加载SMSUTILS");
-		ret = 0;
-		ID = SifExecModuleBuffer(smsutils_irx, size_smsutils_irx, 0, NULL, &ret);
-		smbDiagLog("MOD SMSUTILS: ID=%d ret=%d\n", ID, ret);
-		DPRINTF(" [SMSUTILS]: ID=%d, ret=%d\n", ID, ret);
-		have_smsutils = (ID >= 0 && ret >= 0);
-		if (!have_smsutils)
-			return;
-	}
-
-	/* Standard PS2SDK smap.irx — OPL loads it with NO if_conf argument; it
-	 * registers its NetIF with NetMan (which reports real link status). */
-	if (!have_ps2smap) {
-		smbDiagStep("v49:加载SMAP");
-		ret = 0;
-		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx, 0, NULL, &ret);
-		smbDiagLog("MOD SMAP: ID=%d ret=%d (standard smap.irx, no args)\n", ID, ret);
-		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
-		have_ps2smap = (ID >= 0 && ret >= 0);
-		if (!have_ps2smap)
-			return;
-	}
-
-	/* ps2ip-nm (netman-integrated lwIP). Loaded AFTER smap, like OPL. */
+	/* fix45: load IOP ps2ip BEFORE smap — the smap registers its NetIF with
+	 * ps2ip on load, so ps2ip must already be resident. */
 	if (!have_ps2ip) {
-		smbDiagStep("v49:加载PS2IP");
-		ret = 0;
+		smbDiagStep("v50:加载PS2IP");
 		ID = SifExecModuleBuffer(ps2ip_irx, size_ps2ip_irx, 0, NULL, &ret);
-		smbDiagLog("MOD PS2IP: ID=%d ret=%d (ps2ip-nm)\n", ID, ret);
+		smbDiagLog("MOD PS2IP: ID=%d ret=%d\n", ID, ret);
 		DPRINTF(" [PS2IP]: ID=%d, ret=%d\n", ID, ret);
 		have_ps2ip = (ID >= 0 && ret >= 0);
 		if (!have_ps2ip)
 			return;
 	}
 
-	/* ps2ips — the EE<->IOP ps2ip RPC/socket server OPL pairs with ps2ip-nm. */
-	if (!have_ps2ips) {
-		smbDiagStep("v49:加载PS2IPS");
-		ret = 0;
-		ID = SifExecModuleBuffer(ps2ips_irx, size_ps2ips_irx, 0, NULL, &ret);
-		smbDiagLog("MOD PS2IPS: ID=%d ret=%d\n", ID, ret);
-		DPRINTF(" [PS2IPS]: ID=%d, ret=%d\n", ID, ret);
-		have_ps2ips = (ID >= 0 && ret >= 0);
-		if (!have_ps2ips)
-			return;
+	/* fix45: pass the IP/netmask/gw config block to smap, exactly like fix35
+	 * (which worked). fix36 dropped these args; the pinned smap needs them. */
+	if (!have_ps2smap) {
+		smbDiagStep("v50:加载SMAP");
+		ID = SifExecModuleBuffer(ps2smap_irx, size_ps2smap_irx,
+		                         if_conf_len, &if_conf[0], &ret);
+		smbDiagLog("MOD SMAP: ID=%d ret=%d conf=%d\n", ID, ret, if_conf_len);
+		DPRINTF(" [SMAP]: ID=%d, ret=%d\n", ID, ret);
+		have_ps2smap = (ID >= 0 && ret >= 0);
 	}
 
-	smbDiagStep("v49:配置IP");
-	netfsInitTcpip(); /* ps2ip_init() + ps2ip_setconfig("sm0") via -lps2ips */
+	/* fix45: SMSUTILS is intentionally NOT loaded (as in fix35). It was
+	 * introduced in fix36 together with the regression. */
+	smbDiagStep("v50:配置IP");
+	netfsInitTcpip();
 #endif
 }
 #endif
@@ -795,19 +758,17 @@ static void load_smbman(void)
 
 	if (have_smbman)
 		return;
-	smbDiagStep("v49:加载SMBMAN前准备");
+	smbDiagStep("v50:加载SMBMAN前准备");
 	setupPowerOff();
-	smbDiagStep("v49:加载SMBMAN");
+	smbDiagStep("v50:加载SMBMAN");
 	ID = SifExecModuleBuffer(smbman_irx, size_smbman_irx, 0, NULL, &ret);
 	/* fix43: THE critical line. If smbman fails to load (ID<0 or ret<0) the
 	 * smb: device never registers and every LOGON devctl returns a device-layer
 	 * error (like -191/-19), regardless of the credentials we pass. */
 	smbDiagLog("MOD SMBMAN: ID=%d ret=%d size=%d\n", ID, ret, (int)size_smbman_irx);
 	DPRINTF(" [SMBMAN]: ID=%d, ret=%d\n", ID, ret);
-	/* FIX49: the stale ret=0 from a FAILED SifExecModuleBuffer() must NOT be
-	 * accepted as success (same class of bug as fix44). A negative ID means
-	 * smbman never registered the "smb:" device; treating it as loaded let
-	 * init_smb2() run and ps2ip_init() spin forever. */
+	/* v50: strict check. SifExecModuleBuffer only writes *ret on success;
+	 * a failed load leaves a stale ret, so require a positive ID as well. */
 	have_smbman = (ID >= 0 && ret >= 0);
 }
 //------------------------------
@@ -842,29 +803,28 @@ int init_netfs(void)
 		DPRINTF(" [NETFS]: network stack unavailable, aborting\n");
 		return -1;
 	}
-	/* FIX49: NEVER enter init_smb2() unless the full IOP stack is resident.
-	 * fix48's log showed ps2ip-nm ID=-400 (load failed) and smbman ID=-200,
-	 * yet init_smb2() still ran -> ps2ip_init() wait-looped forever = the
-	 * freeze. If any module failed, report a clean error and abort; the file
-	 * browser then shows "连接失败" instead of opening an empty dir or hanging. */
-	if (!have_ps2ip || !have_ps2ips || !have_ps2smap) {
-		smbDiagStep("v49:网络模块加载失败");
+	/* v50: keep fix49's no-freeze guard. If any IOP module failed to load,
+	 * never enter init_smb2() (ps2ipInit wait-looped forever on that path).
+	 * v47's standalone stack has no ps2ips module, so check the three it does
+	 * use. On failure show a clean "连接失败" instead of hanging/empty dir. */
+	if (!have_ps2ip || !have_ps2smap) {
+		smbDiagStep("v50:网络模块加载失败");
 		smb2_last_error = SMB2_ERR_CONNECT;
-		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s [网络模块加载失败 ps2ip=%d ps2ips=%d smap=%d]",
-		         LNG(SMB_Err_Connect), have_ps2ip, have_ps2ips, have_ps2smap);
-		smbDiagLog("NETFS abort: ps2ip=%d ps2ips=%d smap=%d (IOP heap/stack load failed)\n",
-		           have_ps2ip, have_ps2ips, have_ps2smap);
+		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s [网络模块加载失败 ps2ip=%d smap=%d]",
+		         LNG(SMB_Err_Connect), have_ps2ip, have_ps2smap);
+		smbDiagLog("NETFS abort: ps2ip=%d smap=%d (IOP stack load failed)\n",
+		           have_ps2ip, have_ps2smap);
 		DPRINTF(" [NETFS]: IOP stack incomplete, abort before init_smb2\n");
 		return -1;
 	}
 	/* Load the SMB1 client driver before init_smb2() issues LOGON/OPENSHARE. */
 	load_smbman();
 	if (!have_smbman) {
-		smbDiagStep("v49:SMBMAN加载失败");
+		smbDiagStep("v50:SMBMAN加载失败");
 		smb2_last_error = SMB2_ERR_CONNECT;
 		snprintf(smb2_status_msg, sizeof(smb2_status_msg), "%s [SMBMAN加载失败]",
 		         LNG(SMB_Err_Connect));
-		smbDiagLog("NETFS abort: smbman load failed (ID<0)\n");
+		smbDiagLog("NETFS abort: smbman load failed\n");
 		return -1;
 	}
 	init_smb2(ip, netmask, gw);
